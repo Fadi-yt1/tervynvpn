@@ -12,3 +12,6 @@ build/
 # Xray-core binaries are built/fetched by scripts/ (see docs/XRAY.md); only checksums are committed.
 /xray/android/*/libxray.so
 /xray/host/
+
+# Local source archives
+/tervynvpn-source.zip
