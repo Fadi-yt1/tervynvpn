@@ -124,6 +124,8 @@ tasks.named("preBuild") { dependsOn(verifyXray) }
 
 tasks.withType<Test>().configureEach {
     systemProperty("xray.host.binary", rootProject.file("xray/host/xray").absolutePath)
+    maxHeapSize = "3g"
+    forkEvery = 40
 }
 
 ksp {
