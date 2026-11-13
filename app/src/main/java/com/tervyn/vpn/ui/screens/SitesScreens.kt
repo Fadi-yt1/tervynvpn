@@ -141,48 +141,4 @@ fun SitesScreen(vm: MainViewModel, go: (String) -> Unit) {
     }
 }
 
-private data class AppInfo(val pkg: String, val label: String, val icon: Drawable?)
 
-@Composable
-fun SplitTunnelScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val ctx = LocalContext.current
-    val settings by vm.settings.collectAsState()
-    val s = settings ?: return
-    var apps by remember { mutableStateOf<List<AppInfo>?>(null) }
-    var query by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        apps = withContext(Dispatchers.IO) {
-            val pm = ctx.packageManager
-            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-                .map { it.activityInfo.applicationInfo }
-                .distinctBy { it.packageName }
-                .filter { it.packageName != ctx.packageName }
-                .map { AppInfo(it.packageName, pm.getApplicationLabel(it).toString(), runCatching { pm.getApplicationIcon(it) }.getOrNull()) }
-                .sortedBy { it.label.lowercase() }
-        }
-    }
-    ScreenScaffold("App Exclusions", "Selected apps bypass the VPN completely", onBack) {
-        NotificationCard("Split tunnelling", "Excluded apps use your normal connection in every mode. With Android's \"Block connections without VPN\" enabled, excluded apps lose internet access.", Tone.INFO)
-        Spacer(Modifier.height(Space.s))
-        ProxyInputField(query, { query = it }, "Search apps")
-        Spacer(Modifier.height(Space.s))
-        val list = apps
-        if (list == null) LoadingIndicator("Loading apps…")
-        else list.filter { query.isBlank() || it.label.contains(query, true) || it.pkg.contains(query, true) }.forEach { app ->
-            val checked = app.pkg in s.excludedApps
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                val bmp = remember(app.pkg) { app.icon?.toBitmap(96, 96)?.asImageBitmap() }
-                if (bmp != null) Image(bmp, null, Modifier.size(36.dp)) else Icon(Icons.Rounded.CheckCircle, null, tint = c.text3)
-                Spacer(Modifier.width(Space.m))
-                Column(Modifier.weight(1f)) {
-                    Text(app.label, color = c.text, style = MaterialTheme.typography.titleSmall)
-                    Text(app.pkg, color = c.text3, style = MaterialTheme.typography.labelSmall)
-                }
-                Checkbox(checked, { on -> vm.setExcludedApps(if (on) s.excludedApps + app.pkg else s.excludedApps - app.pkg) },
-                    colors = CheckboxDefaults.colors(checkedColor = c.cyan))
-            }
-        }
-    }
-}

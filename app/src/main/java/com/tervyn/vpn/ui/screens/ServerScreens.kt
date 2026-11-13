@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -163,77 +164,6 @@ fun ServersScreen(vm: MainViewModel, go: (String) -> Unit, onBack: (() -> Unit)?
     }
 }
 
-@Composable
-fun ServerDetailsScreen(vm: MainViewModel, id: String, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val servers by vm.servers.collectAsState()
-    val status by vm.status.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val ctx = LocalContext.current
-    val srv = servers.firstOrNull { it.id == id }
-    var testing by remember { mutableStateOf(false) }
-    if (srv == null) { ScreenScaffold("Server", null, onBack) { EmptyState(Icons.Rounded.Search, "Server not found", "It may have been removed.") }; return }
-    val outbound = srv.xrayLink?.let { runCatching { Links.parse(it) }.getOrNull() }
-    ScreenScaffold(srv.name, srv.protocolLabel, onBack, actions = {
-        IconButton(onClick = { vm.toggleFavorite(srv) }) { Icon(Icons.Rounded.Star, "Favorite", tint = if (srv.favorite) c.amber else c.text3) }
-    }) {
-        GlassCard(highlight = status.server?.id == srv.id) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CountryFlag(srv.countryCode, 56.dp)
-                Spacer(Modifier.width(Space.m))
-                Column(Modifier.weight(1f)) {
-                    Text(if (srv.countryCode != null) Format.countryName(srv.countryCode) else "Location not verified yet", style = MaterialTheme.typography.titleMedium, color = c.text)
-                    Text(if (srv.alive) "Online · verified ${Format.ago(srv.lastChecked)}" else if (srv.lastChecked > 0) "Offline at last check" else "Not tested yet",
-                        color = if (srv.alive) c.green else c.text2, style = MaterialTheme.typography.bodySmall)
-                }
-                PingIndicator(if (srv.alive) srv.latencyMs else null)
-            }
-        }
-        Spacer(Modifier.height(Space.m))
-        GlassCard {
-            Detail("Protocol", srv.protocolLabel)
-            Detail("Address", srv.endpoint?.let { "${it.host}:${it.port}" } ?: outbound?.let { "${it.address}:${it.port}" } ?: "—")
-            if (srv.endpoint?.hasAuth == true || outbound?.username?.isNotEmpty() == true) Detail("Authentication", "Username & password (encrypted on device)")
-            outbound?.let {
-                Detail("Transport", it.network.uppercase())
-                Detail("Security", it.security.uppercase() + if (it.pinnedPeerCertSha256.isNotEmpty()) " · pinned certificate" else "")
-                if (it.sni.isNotEmpty()) Detail("SNI", it.sni)
-                if (it.flow.isNotEmpty()) Detail("Flow", it.flow)
-            }
-            Detail("Verified exit IP", srv.exitIp ?: "—")
-            Detail("Latency (HTTPS test)", srv.latencyMs?.let { "$it ms" } ?: "—")
-            Detail("Load", "Not reported by this server type")
-            Detail("Source", srv.origin.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() })
-            Detail("Failures in a row", srv.failCount.toString())
-            Detail("Last used", Format.ago(srv.lastUsed))
-        }
-        if (srv.origin == ServerOrigin.FREE_PUBLIC) {
-            Spacer(Modifier.height(Space.m))
-            NotificationCard("Free public server", "Operated by an unknown third party. Avoid sensitive logins through it.", Tone.WARNING)
-        }
-        if (outbound?.insecureRequested == true) {
-            Spacer(Modifier.height(Space.s))
-            NotificationCard("Insecure TLS requested", "This link asked to skip certificate checks. Tervyn always verifies certificates; use pinning (pcs) if the server uses a self-signed certificate.", Tone.WARNING)
-        }
-        Spacer(Modifier.height(Space.l))
-        NeonButton(if (!settings!!.autoSwitch && settings!!.selectedServerId == srv.id) "Selected" else "Use this server", {
-            vm.selectServer(srv.id)
-            onBack()
-        }, Modifier.fillMaxWidth(), icon = Icons.Rounded.CheckCircle)
-        Text("Selecting a specific server turns auto-switch off.", color = c.text3, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-        Spacer(Modifier.height(Space.s))
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            NeonButton(if (testing) "Testing…" else "Test now", { testing = true; vm.testServer(srv) { testing = false } }, Modifier.weight(1f), icon = Icons.Rounded.Timer, secondary = true, enabled = !testing)
-            NeonButton("Copy", {
-                val text = srv.xrayLink ?: srv.endpoint?.let(ProxyList::toUrl) ?: ""
-                (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("server", text))
-                vm.toast("Copied (contains credentials)")
-            }, Modifier.weight(1f), icon = Icons.Rounded.ContentCopy, secondary = true)
-        }
-        Spacer(Modifier.height(Space.s))
-        NeonButton("Delete server", { vm.deleteServer(srv); onBack() }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Delete, danger = true)
-    }
-}
 
 @Composable
 private fun Detail(label: String, value: String) {
@@ -253,7 +183,7 @@ fun CountryScreen(vm: MainViewModel, onBack: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     // Only countries proven by a successful test (exit IP geolocated by Cloudflare) are listed.
     val byCountry = servers.filter { it.origin in s.sourceMode.origins && it.alive && it.countryCode != null }.groupBy { it.countryCode!! }
-    ScreenScaffold("Country", "Only countries of verified servers are shown", onBack) {
+    ScreenScaffold("Country", "Only countries of verified servers are shown", onBack, heroIcon = Icons.Rounded.Public, accentWord = "Country") {
         GlassCard(highlight = s.preferredCountry == null, onClick = { vm.selectCountry(null); onBack() }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Bolt, null, tint = c.amber); Spacer(Modifier.width(Space.m))
@@ -290,7 +220,7 @@ fun AutoSwitchScreen(vm: MainViewModel, onBack: () -> Unit) {
     val c = Tervyn.colors
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Auto-Switch", "How Tervyn picks and changes servers", onBack) {
+    ScreenScaffold("Auto-Switch", "How Tervyn picks and changes servers", onBack, heroIcon = Icons.Rounded.Bolt, accentWord = "Switch") {
         GlassCard {
             ToggleSetting(Icons.Rounded.Bolt, "Auto-switch to fastest server", if (s.autoSwitch) "On: uses the fastest verified server and keeps backups ready" else "Off: stays on your selected server", s.autoSwitch, { vm.setAutoSwitch(it) }, tint = c.green)
         }
@@ -322,51 +252,6 @@ fun AutoSwitchScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(Space.m))
         NotificationCard("Rules", "• Selecting a specific server turns auto-switch off.\n• Selecting Fastest Available turns it on.\n• With auto-switch off Tervyn never moves you to another server; it retries your server instead.", Tone.INFO)
-    }
-}
-
-@Composable
-fun CheckIpScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val ip by vm.ip.collectAsState()
-    val loading by vm.ipLoading.collectAsState()
-    val status by vm.status.collectAsState()
-    LaunchedEffect(status.isConnected) { vm.checkIp() }
-    ScreenScaffold("Check My IP", "Your public address as websites see it", onBack, actions = {
-        IconButton(onClick = { vm.checkIp() }) { Icon(Icons.Rounded.Refresh, "Refresh", tint = c.cyan) }
-    }) {
-        val (info, err) = ip
-        when {
-            loading -> LoadingIndicator("Checking…")
-            err != null -> NotificationCard("Could not check IP", err, Tone.ERROR)
-            info != null -> {
-                GlassCard(highlight = info.viaVpn) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CountryFlag(info.countryCode, 64.dp)
-                        Spacer(Modifier.width(Space.m))
-                        Column {
-                            Text(info.ip, style = MaterialTheme.typography.headlineSmall, color = c.text)
-                            Text(Format.countryName(info.countryCode), color = c.text2)
-                        }
-                    }
-                    Spacer(Modifier.height(Space.m))
-                    Pill(if (info.viaVpn) "Protected by Tervyn VPN" else "Not protected — this is your real IP", if (info.viaVpn) c.green else c.amber)
-                }
-                Spacer(Modifier.height(Space.m))
-                GlassCard {
-                    Detail("City", info.city ?: "Not available")
-                    Detail("Region", info.region ?: "Not available")
-                    Detail("ISP / network", info.isp ?: "Not available")
-                    Detail("Connection", if (info.viaVpn) "VPN · ${status.server?.name ?: ""}" else "Direct")
-                    if (info.viaVpn) Detail("Protocol", status.server?.protocolLabel ?: "—")
-                }
-                Spacer(Modifier.height(Space.s))
-                Text("Address and country come from Cloudflare's trace endpoint; city and ISP from the lookup service in DNS & Network settings and may be approximate.",
-                    color = c.text3, style = MaterialTheme.typography.labelSmall)
-            }
-        }
-        Spacer(Modifier.height(Space.m))
-        NeonButton("Refresh", { vm.checkIp() }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Refresh)
     }
 }
 

@@ -44,6 +44,9 @@ data class VpnStatus(
     val testTotal: Int = 0,
     val working: Int = 0,
     val lastHealthCheck: Long = 0,
+    /** Reported by the service on Android 10+: always-on VPN and "Block connections without VPN". */
+    val alwaysOn: Boolean? = null,
+    val lockdown: Boolean? = null,
     val error: String? = null,
 ) {
     val isActive get() = phase != Phase.DISCONNECTED && phase != Phase.FAILED

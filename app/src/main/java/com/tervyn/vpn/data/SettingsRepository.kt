@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 
+enum class SplitMode(val label: String) { BYPASS("Selected apps bypass the VPN"), ONLY_SELECTED("Only selected apps use the VPN") }
+
 enum class AppTheme(val label: String) { MIDNIGHT("Midnight (default)"), AMOLED("AMOLED black"), DEEP_BLUE("Deep blue") }
 
 @Serializable
@@ -47,6 +49,10 @@ data class AppSettings(
     val sound: Boolean = false,
     val theme: AppTheme = AppTheme.MIDNIGHT,
     val excludedApps: Set<String> = emptySet(),
+    val splitMode: SplitMode = SplitMode.BYPASS,
+    val includedApps: Set<String> = emptySet(),
+    val notificationsEnabled: Boolean = true,
+    val dataAlertMb: Int = 0,
     val ipLookupUrl: String = DEFAULT_IP_LOOKUP,
     val traceUrl: String = ProxyTester.DEFAULT_TRACE_URL,
     val testConcurrency: Int = 64,
@@ -94,6 +100,10 @@ class SettingsRepository(private val context: Context) {
         val sound = booleanPreferencesKey("sound")
         val theme = stringPreferencesKey("theme")
         val excluded = stringSetPreferencesKey("excluded_apps")
+        val splitMode = stringPreferencesKey("split_mode")
+        val included = stringSetPreferencesKey("included_apps")
+        val nAll = booleanPreferencesKey("n_all")
+        val dataAlert = intPreferencesKey("data_alert_mb")
         val ipLookup = stringPreferencesKey("ip_lookup")
         val trace = stringPreferencesKey("trace_url")
         val concurrency = intPreferencesKey("concurrency")
@@ -140,6 +150,10 @@ class SettingsRepository(private val context: Context) {
             sound = p[K.sound] ?: d.sound,
             theme = p[K.theme]?.let { runCatching { AppTheme.valueOf(it) }.getOrNull() } ?: d.theme,
             excludedApps = p[K.excluded] ?: d.excludedApps,
+            splitMode = p[K.splitMode]?.let { runCatching { SplitMode.valueOf(it) }.getOrNull() } ?: d.splitMode,
+            includedApps = p[K.included] ?: d.includedApps,
+            notificationsEnabled = p[K.nAll] ?: d.notificationsEnabled,
+            dataAlertMb = p[K.dataAlert] ?: d.dataAlertMb,
             ipLookupUrl = p[K.ipLookup] ?: d.ipLookupUrl,
             traceUrl = p[K.trace] ?: d.traceUrl,
             testConcurrency = p[K.concurrency] ?: d.testConcurrency,
@@ -181,6 +195,10 @@ class SettingsRepository(private val context: Context) {
             p[K.sound] = s.sound
             p[K.theme] = s.theme.name
             p[K.excluded] = s.excludedApps
+            p[K.splitMode] = s.splitMode.name
+            p[K.included] = s.includedApps
+            p[K.nAll] = s.notificationsEnabled
+            p[K.dataAlert] = s.dataAlertMb.coerceIn(0, 100_000)
             p[K.ipLookup] = s.ipLookupUrl
             p[K.trace] = s.traceUrl
             p[K.concurrency] = s.testConcurrency.coerceIn(1, 128)

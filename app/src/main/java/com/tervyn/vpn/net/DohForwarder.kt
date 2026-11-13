@@ -22,6 +22,8 @@ class DohForwarder(
             "Cloudflare (1.1.1.1)" to "https://1.1.1.1/dns-query",
             "Google (8.8.8.8)" to "https://8.8.8.8/dns-query",
             "Quad9 (9.9.9.9)" to "https://9.9.9.9/dns-query",
+            "AdGuard DNS" to "https://dns.adguard-dns.com/dns-query",
+            "OpenDNS" to "https://doh.opendns.com/dns-query",
         )
     }
 

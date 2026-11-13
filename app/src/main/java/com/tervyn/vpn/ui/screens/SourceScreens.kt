@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Code
@@ -109,39 +110,6 @@ private fun RadioRow(selected: Boolean, title: String, subtitle: String?, onClic
     }
 }
 
-@Composable
-fun SourcesScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
-    val settings by vm.settings.collectAsState()
-    val s = settings ?: return
-    val config = mapOf(
-        SourceMode.FREE to Routes.FREE_SOURCES, SourceMode.PROXIO to Routes.PROXIO, SourceMode.PROXIO_PLUS_FREE to Routes.PROXIO,
-        SourceMode.OWN to Routes.PROTOCOLS, SourceMode.INTEGRATION to Routes.INTEGRATION, SourceMode.LIST_FILE to Routes.LIST_IMPORT,
-    )
-    val desc = mapOf(
-        SourceMode.FREE to "18 public proxy lists, tested automatically",
-        SourceMode.PROXIO to "Private proxies from your Proxio.io account (API key)",
-        SourceMode.PROXIO_PLUS_FREE to "Proxio.io first, free servers as backups",
-        SourceMode.OWN to "VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP, subscriptions",
-        SourceMode.INTEGRATION to "Paste cURL / Python / Node.js examples from your provider",
-        SourceMode.LIST_FILE to "Import a .txt list of proxies",
-    )
-    ScreenScaffold("Server Source", "Where Tervyn gets its servers", onBack) {
-        GlassCard {
-            SourceMode.entries.forEach { m ->
-                RadioRow(s.sourceMode == m, m.label, desc[m]) { vm.setSourceMode(m) }
-            }
-        }
-        Spacer(Modifier.height(Space.m))
-        NeonButton("Configure ${s.sourceMode.label}", { go(config.getValue(s.sourceMode)) }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Tune)
-        Spacer(Modifier.height(Space.m))
-        GlassCard {
-            SettingsRow(Icons.Rounded.Link, "Import share link / QR", "vless://, vmess://, trojan://, ss://", { go(Routes.IMPORT_LINK) })
-            SettingsRow(Icons.Rounded.Cloud, "Subscriptions", "Manage subscription URLs", { go(Routes.SUBSCRIPTIONS) })
-            SettingsRow(Icons.Rounded.Add, "Add custom proxy", "HTTP or SOCKS5 with optional login", { go(Routes.ADD_PROXY) })
-            SettingsRow(Icons.Rounded.Tune, "Advanced server configuration", "Manual Xray outbound", { go(Routes.ADVANCED) })
-        }
-    }
-}
 
 @Composable
 fun FreeSourcesScreen(vm: MainViewModel, onBack: () -> Unit) {
@@ -149,7 +117,7 @@ fun FreeSourcesScreen(vm: MainViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
     var custom by remember { mutableStateOf("") }
-    ScreenScaffold("Free public servers", "Proxy lists Tervyn downloads and tests", onBack) {
+    ScreenScaffold("Free public servers", "Proxy lists Tervyn downloads and tests", onBack, heroIcon = Icons.Rounded.Public, accentWord = "servers") {
         NotificationCard("Unknown operators", "These are open proxies run by unknown people. Every server is tested over HTTPS with certificate validation, but do not use them for banking or sensitive logins.", Tone.WARNING)
         Spacer(Modifier.height(Space.m))
         GlassCard {
@@ -189,7 +157,7 @@ fun ProxioScreen(vm: MainViewModel, onBack: () -> Unit) {
     var proto by rememberSaveable { mutableStateOf(s.proxioProtocol) }
     var limit by rememberSaveable { mutableStateOf(s.proxioLimit.toString()) }
     val hasKey = vm.proxioKeySet()
-    ScreenScaffold("Proxio.io", "Private proxies from your Proxio account", onBack) {
+    ScreenScaffold("Proxio.io", "Private proxies from your Proxio account", onBack, heroIcon = Icons.Rounded.Key, accentWord = "Proxio") {
         GlassCard {
             ProxyInputField(key, { key = it.trim() }, if (hasKey) "API key (saved — enter to replace)" else "API key", secret = true)
             Text("Stored encrypted with the Android Keystore; never logged.", color = c.text3, style = MaterialTheme.typography.labelSmall)
@@ -224,64 +192,7 @@ fun ProxioScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 }
 
-@Composable
-fun ProtocolSelectionScreen(onBack: () -> Unit, go: (String) -> Unit) {
-    ScreenScaffold("Add a server", "Choose how to add your own server", onBack) {
-        ProtocolCard("Share link or QR code", "VLESS (REALITY, Vision, WS, gRPC, XHTTP, HTTPUpgrade), VMess, Trojan, Shadowsocks", Icons.Rounded.QrCode, { go(Routes.IMPORT_LINK) }, badge = "Easiest")
-        Spacer(Modifier.height(Space.s))
-        ProtocolCard("Subscription URL", "Import and update a list of servers from your provider", Icons.Rounded.Cloud, { go(Routes.SUBSCRIPTIONS) })
-        Spacer(Modifier.height(Space.s))
-        ProtocolCard("SOCKS5 / HTTP proxy", "Host, port and optional username & password", Icons.Rounded.Router, { go(Routes.ADD_PROXY) })
-        Spacer(Modifier.height(Space.s))
-        ProtocolCard("Manual Xray configuration", "Fill in every field of a VLESS/VMess/Trojan/Shadowsocks outbound", Icons.Rounded.Tune, { go(Routes.ADVANCED) })
-        Spacer(Modifier.height(Space.s))
-        ProtocolCard("Proxy list file (.txt)", "Many proxies in one file", Icons.Rounded.Description, { go(Routes.LIST_IMPORT) })
-        Spacer(Modifier.height(Space.s))
-        ProtocolCard("Provider code sample", "cURL, Python or Node.js examples", Icons.Rounded.Code, { go(Routes.INTEGRATION) })
-    }
-}
 
-@Composable
-fun AddProxyScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val scope = rememberCoroutineScope()
-    val action = remember { AsyncAction() }
-    var proto by rememberSaveable { mutableStateOf(ProxyProtocol.SOCKS5) }
-    var name by rememberSaveable { mutableStateOf("") }
-    var host by rememberSaveable { mutableStateOf("") }
-    var port by rememberSaveable { mutableStateOf("") }
-    var user by rememberSaveable { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    val hostErr = if (host.isNotBlank() && !ProxyList.isValidHost(host.trim())) "Invalid host" else null
-    val portErr = if (port.isNotBlank() && port.toIntOrNull()?.let(ProxyList::validPort) != true) "1–65535" else null
-    ScreenScaffold("Add Custom Proxy", "Your own HTTP or SOCKS5 server", onBack) {
-        GlassCard {
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                ProxyProtocol.entries.forEach { p ->
-                    FilterChip(proto == p, { proto = p }, label = { Text(if (p == ProxyProtocol.HTTP) "HTTP (CONNECT)" else "SOCKS5") },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = c.blue.copy(alpha = .3f), selectedLabelColor = c.cyan, labelColor = c.text2))
-                }
-            }
-            ProxyInputField(name, { name = it.take(60) }, "Name (optional)")
-            ProxyInputField(host, { host = it.trim() }, "Host or IP", keyboardType = KeyboardType.Uri, error = hostErr)
-            ProxyInputField(port, { if (it.length <= 5 && it.all(Char::isDigit)) port = it }, "Port", keyboardType = KeyboardType.Number, error = portErr)
-            ProxyInputField(user, { user = it.take(255) }, "Username (optional)")
-            ProxyInputField(pass, { pass = it.take(255) }, "Password (optional)", secret = true)
-        }
-        Spacer(Modifier.height(Space.m))
-        NeonButton("Save & Test", {
-            val ep = ProxyEndpoint(proto, host.trim(), port.toInt(), user.ifBlank { null }, if (user.isBlank()) null else pass)
-            scope.launch {
-                action.running = true; action.result = null
-                val (srv, r) = vm.addCustomProxy(ep, name)
-                action.running = false
-                action.result = (if (r.ok) "${srv.name} works: ${r.latencyMs} ms, exit ${r.exitIp} (${r.countryCode ?: "?"})" else "Saved, but the test failed: ${r.error}") to r.ok
-            }
-        }, Modifier.fillMaxWidth(), enabled = !action.running && host.isNotBlank() && hostErr == null && portErr == null && port.isNotBlank())
-        Spacer(Modifier.height(Space.m))
-        ResultCard(action, vm)
-    }
-}
 
 @Composable
 fun AdvancedConfigScreen(vm: MainViewModel, onBack: () -> Unit) {
@@ -304,7 +215,7 @@ fun AdvancedConfigScreen(vm: MainViewModel, onBack: () -> Unit) {
     var hostH by rememberSaveable { mutableStateOf("") }
     var path by rememberSaveable { mutableStateOf("") }
     var pin by rememberSaveable { mutableStateOf("") }
-    ScreenScaffold("Advanced Configuration", "Manual Xray outbound", onBack) {
+    ScreenScaffold("Advanced Configuration", "Manual Xray outbound", onBack, heroIcon = Icons.Rounded.Tune, accentWord = "Configuration") {
         GlassCard {
             Text("Protocol", color = c.text, style = MaterialTheme.typography.titleSmall)
             ChipRow(XrayProtocol.entries.filter { it != XrayProtocol.HTTP && it != XrayProtocol.SOCKS }.map { it.name to it.label }, proto.name) { proto = XrayProtocol.valueOf(it) }
@@ -389,45 +300,6 @@ fun decodeQr(ctx: android.content.Context, uri: Uri): String? = runCatching {
     MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(scaled.width, scaled.height, px)))).text
 }.getOrNull()
 
-@Composable
-fun ImportLinkScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val action = remember { AsyncAction() }
-    var text by rememberSaveable { mutableStateOf("") }
-    val pending by PendingActions.importLink.collectAsState()
-    LaunchedEffect(pending) { pending?.let { text = it; PendingActions.importLink.value = null } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch {
-            val r = withContext(Dispatchers.IO) { decodeQr(ctx, uri) }
-            if (r == null) vm.toast("No QR code found in the image") else text = r
-        }
-    }
-    ScreenScaffold("Import Configuration", "VLESS / VMess / Trojan / Shadowsocks links", onBack) {
-        ProxyInputField(text, { text = it }, "Paste one or more links", singleLine = false, minLines = 4, placeholder = "vless://uuid@host:443?security=reality&…")
-        Spacer(Modifier.height(Space.s))
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            NeonButton("QR from image", { picker.launch("image/*") }, Modifier.weight(1f), icon = Icons.Rounded.QrCode, secondary = true)
-            NeonButton("Import & Test", {
-                scope.launch {
-                    action.running = true; action.result = null
-                    val r = vm.importLinks(text)
-                    action.running = false; action.result = r.message to (r.added > 0)
-                    if (r.added > 0) text = ""
-                }
-            }, Modifier.weight(1f), enabled = text.isNotBlank() && !action.running)
-        }
-        Spacer(Modifier.height(Space.m))
-        ResultCard(action, vm)
-        Spacer(Modifier.height(Space.m))
-        NotificationCard("How it works", "Each server runs in its own Xray-core instance with a private SOCKS5 endpoint on 127.0.0.1 protected by a random password, and is tested over HTTPS before it can be used. Certificates are always verified.", Tone.INFO)
-        if (!vm.c.xray.available) {
-            Spacer(Modifier.height(Space.s))
-            NotificationCard("Xray unavailable", "This build does not include Xray for your device's CPU architecture.", Tone.ERROR)
-        }
-    }
-}
 
 @Composable
 fun SubscriptionsScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
@@ -438,7 +310,7 @@ fun SubscriptionsScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> U
     val action = remember { AsyncAction() }
     var name by rememberSaveable { mutableStateOf("") }
     var url by rememberSaveable { mutableStateOf("") }
-    ScreenScaffold("Subscriptions & Servers", "Server lists from your provider", onBack) {
+    ScreenScaffold("Subscriptions & Servers", "Server lists from your provider", onBack, heroIcon = Icons.Rounded.Cloud, accentWord = "Servers") {
         GlassCard {
             ProxyInputField(name, { name = it.take(40) }, "Name (optional)")
             ProxyInputField(url, { url = it.trim() }, "Subscription URL (https://…)", keyboardType = KeyboardType.Uri)
@@ -498,7 +370,7 @@ fun ListImportScreen(vm: MainViewModel, onBack: () -> Unit) {
         if (uri != null) scope.launch { runCatching { vm.readText(uri) }.onSuccess { text = it }.onFailure { vm.toast(it.message ?: "Cannot read file") } }
     }
     val preview = remember(text, proto) { if (text.isBlank()) null else ProxyList.parse(text, proto) }
-    ScreenScaffold("Proxy List Import", "Import a .txt file or paste a list", onBack) {
+    ScreenScaffold("Proxy List Import", "Import a .txt file or paste a list", onBack, heroIcon = Icons.Rounded.Description, accentWord = "Import") {
         NeonButton("Choose .txt file", { picker.launch(arrayOf("text/plain", "text/*", "application/octet-stream")) }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Description, secondary = true)
         Spacer(Modifier.height(Space.s))
         ProxyInputField(text.take(20_000), { text = it }, "…or paste proxies here", singleLine = false, minLines = 5,
@@ -532,7 +404,7 @@ fun IntegrationScreen(vm: MainViewModel, onBack: () -> Unit) {
     val action = remember { AsyncAction() }
     var text by rememberSaveable { mutableStateOf("") }
     val preview = remember(text) { if (text.isBlank()) null else com.tervyn.vpn.core.ProxySnippet.parse(text) }
-    ScreenScaffold("Proxy Integration", "Paste the example from Webshare, Bright Data, Oxylabs, IPRoyal…", onBack) {
+    ScreenScaffold("Proxy Integration", "Paste the example from Webshare, Bright Data, Oxylabs, IPRoyal…", onBack, heroIcon = Icons.Rounded.Code, accentWord = "Integration") {
         ProxyInputField(text, { text = it.take(20_000) }, "cURL, Python or Node.js example", singleLine = false, minLines = 6,
             placeholder = "curl -x http://user:pass@host:port https://ipinfo.io")
         Spacer(Modifier.height(Space.s))

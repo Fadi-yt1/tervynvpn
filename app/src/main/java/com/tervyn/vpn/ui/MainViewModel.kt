@@ -167,6 +167,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         s to c.serverManager.testServer(s)
     }
 
+    /** "Auto" proxy type: tries SOCKS5 first, then HTTP CONNECT, and keeps whichever passes the HTTPS test. */
+    suspend fun addCustomProxyAuto(host: String, port: Int, user: String?, pass: String?, name: String): Pair<Server, TestResult> = withContext(Dispatchers.IO) {
+        val s5 = addCustomProxy(ProxyEndpoint(ProxyProtocol.SOCKS5, host, port, user, pass), name)
+        if (s5.second.ok) return@withContext s5
+        val http = addCustomProxy(ProxyEndpoint(ProxyProtocol.HTTP, host, port, user, pass), name)
+        if (http.second.ok) { c.servers.delete(s5.first.id); http } else { c.servers.delete(http.first.id); s5 }
+    }
+
     /** Imports one or many share links (vless/vmess/trojan/ss/socks/http) and tests them via temporary Xray instances. */
     suspend fun importLinks(text: String): ImportResult = withContext(Dispatchers.IO) {
         val (ok, errors) = Links.parseMany(text)
@@ -246,6 +254,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setExcludedApps(pkgs: Set<String>) = viewModelScope.launch {
         c.settings.update { it.copy(excludedApps = pkgs) }
+        c.controller.reloadRouting()
+    }
+
+    fun setIncludedApps(pkgs: Set<String>) = viewModelScope.launch {
+        c.settings.update { it.copy(includedApps = pkgs) }
+        c.controller.reloadRouting()
+    }
+
+    fun setSplitMode(m: com.tervyn.vpn.data.SplitMode) = viewModelScope.launch {
+        c.settings.update { it.copy(splitMode = m) }
         c.controller.reloadRouting()
     }
 
@@ -344,6 +362,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         c.history.log("DIAGNOSTICS", "Network diagnostics", "${out.count { it.ok == true }} passed, ${out.count { it.ok == false }} failed")
         _diagRunning.value = false
     }
+
+    private val _checks = MutableStateFlow<Map<String, Check>>(emptyMap())
+    val checkResults = _checks.asStateFlow()
+    private val _checkRunning = MutableStateFlow<Set<String>>(emptySet())
+    val checkRunning = _checkRunning.asStateFlow()
+
+    /** Runs one diagnostic tool: internet, dns, proxy, loss or latency. */
+    fun runCheck(id: String) = viewModelScope.launch(Dispatchers.IO) {
+        _checkRunning.value = _checkRunning.value + id
+        val s = c.settings.current()
+        val ep = if (status.value.isConnected) c.controller.activeEndpoint else null
+        val r: Check = try {
+            when (id) {
+                "internet" -> HttpsOverProxy().request(s.traceUrl, null, timeoutMs = 8000, maxBody = 8192)
+                    .let { Check("Internet connectivity", it.code == 200, "HTTPS OK in ${it.totalMs} ms (certificate verified)") }
+                "dns" -> {
+                    val t0 = System.currentTimeMillis()
+                    val a = runInterruptible { InetAddress.getAllByName("www.cloudflare.com") }
+                    val doh = c.doh.direct(DnsMessage.buildQuery(9, "example.com", DnsMessage.TYPE_A))
+                    Check("DNS lookup", a.isNotEmpty() && doh != null, "System resolver ${System.currentTimeMillis() - t0} ms · encrypted DNS ${if (doh != null) "OK" else "failed"}")
+                }
+                "proxy" -> if (ep == null) Check("Proxy health check", null, "Not connected") else
+                    c.serverManager.tester(s).test(ep).let { Check("Proxy health check", it.ok, if (it.ok) "Exit ${it.exitIp} · ${it.latencyMs} ms" else it.error ?: "failed") }
+                "loss", "latency" -> {
+                    val (lat, jit, loss) = SpeedTest(c.httpsOverProxy).latency(ep, samples = if (id == "loss") 10 else 5)
+                    if (id == "loss") Check("Request loss", loss < 20, "$loss% of ${if (ep != null) "tunnelled" else "direct"} probe requests failed (ICMP is not available to apps)")
+                    else Check("Latency", lat != null, lat?.let { "$it ms median HTTPS round-trip · jitter $jit ms" } ?: "Unreachable")
+                }
+                else -> Check(id, null, "Unknown check")
+            }
+        } catch (e: Exception) {
+            Check(id, false, e.message ?: e.javaClass.simpleName)
+        }
+        _checks.value = _checks.value + (id to r)
+        _checkRunning.value = _checkRunning.value - id
+    }
+
+    suspend fun importLinksFromFile(uri: Uri): ImportResult = importLinks(readText(uri))
 
     // ---- privacy / data ----------------------------------------------------------------------
 

@@ -89,6 +89,7 @@ class TervynVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var currentNetwork: Network? = null
     private var foreground = false
+    private var dataAlertSent = false
 
     override fun onCreate() {
         super.onCreate()
@@ -169,7 +170,9 @@ class TervynVpnService : VpnService() {
             val now = System.currentTimeMillis()
             controller.set {
                 it.copy(phase = Phase.CONNECTED, server = srv, exitIp = verify.exitIp, countryCode = verify.countryCode ?: srv.countryCode,
-                    connectedSince = now, pingMs = verify.latencyMs, message = null, error = null, lastHealthCheck = now)
+                    connectedSince = now, pingMs = verify.latencyMs, message = null, error = null, lastHealthCheck = now,
+                    alwaysOn = if (Build.VERSION.SDK_INT >= 29) isAlwaysOn else null,
+                    lockdown = if (Build.VERSION.SDK_INT >= 29) isLockdownEnabled else null)
             }
             c.servers.markUsed(srv.id)
             c.settings.update { it.copy(lastConnectedAt = now) }
@@ -235,8 +238,13 @@ class TervynVpnService : VpnService() {
             matcherCidrs.forEach { (net, prefix) -> runCatching { b.addRoute(com.tervyn.vpn.vpn.Packets.ipToString(net), prefix) } }
         }
         // Tervyn's own traffic (proxy tests, list downloads, Xray) must never loop back into the tunnel.
-        b.addDisallowedApplication(packageName)
-        settings.excludedApps.forEach { pkg -> runCatching { b.addDisallowedApplication(pkg) } }
+        if (settings.splitMode == com.tervyn.vpn.data.SplitMode.ONLY_SELECTED && settings.includedApps.isNotEmpty()) {
+            // Allow-list mode: only the chosen apps are routed; Tervyn itself is implicitly outside the tunnel.
+            settings.includedApps.filter { it != packageName }.forEach { pkg -> runCatching { b.addAllowedApplication(pkg) } }
+        } else {
+            b.addDisallowedApplication(packageName)
+            settings.excludedApps.forEach { pkg -> runCatching { b.addDisallowedApplication(pkg) } }
+        }
         b.setBlocking(true)
         if (Build.VERSION.SDK_INT >= 29) b.setMetered(false)
         b.setConfigureIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
@@ -316,6 +324,7 @@ class TervynVpnService : VpnService() {
     // ---- monitors --------------------------------------------------------------------------
 
     private fun startMonitors() {
+        dataAlertSent = false
         monitorJobs.forEach { it.cancel() }
         monitorJobs.clear()
         monitorJobs += scope.launch { statsLoop() }
@@ -339,6 +348,11 @@ class TervynVpnService : VpnService() {
             }
             if (++tick % 3 == 0 && foreground) Notifications.updateStatus(this, controller.status.value, settings.showSpeedInNotification)
             if (tick % 30 == 0) historyId?.let { c.history.updateTraffic(it, down, up) }
+            val alertBytes = settings.dataAlertMb.toLong() * 1_048_576
+            if (alertBytes > 0 && !dataAlertSent && down + up >= alertBytes) {
+                dataAlertSent = true
+                Notifications.event(this, settings, "Data usage", "This session has used ${com.tervyn.vpn.utils.Format.bytes(down + up)} through Tervyn VPN.", Notifications.Kind.DATA)
+            }
             if (e.dialFailures.get() >= 4 && controller.status.value.phase == Phase.CONNECTED) {
                 e.dialFailures.set(0)
                 scope.launch { healthCheck(urgent = true) }

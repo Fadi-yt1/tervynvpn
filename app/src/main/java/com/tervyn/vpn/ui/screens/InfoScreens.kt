@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Code
@@ -56,7 +57,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun HelpScreen(onBack: () -> Unit, go: (String) -> Unit) {
-    ScreenScaffold("Help & Support", null, onBack) {
+    ScreenScaffold("Help & Support", null, onBack, heroIcon = Icons.Rounded.SupportAgent, accentWord = "Support") {
         GlassCard {
             SettingsRow(Icons.Rounded.QuestionAnswer, "FAQ", "Answers to common questions", { go(Routes.FAQ) })
             SettingsRow(Icons.Rounded.BugReport, "Network diagnostics", "Find out why something doesn't work", { go(Routes.DIAGNOSTICS) })
@@ -84,7 +85,7 @@ private val faq = listOf(
 @Composable
 fun FaqScreen(onBack: () -> Unit) {
     val c = Tervyn.colors
-    ScreenScaffold("FAQ", null, onBack) {
+    ScreenScaffold("FAQ", null, onBack, heroIcon = Icons.Rounded.QuestionAnswer, accentWord = "FAQ") {
         faq.forEach { (q, a) ->
             var open by rememberSaveable(q) { mutableStateOf(false) }
             GlassCard(Modifier.animateContentSize(), onClick = { open = !open }) {
@@ -109,7 +110,7 @@ fun ReportScreen(vm: MainViewModel, onBack: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     var includeDiag by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(Unit) { if (checks.isEmpty()) vm.runDiagnostics() }
-    ScreenScaffold("Report a Problem", "Nothing is sent automatically", onBack) {
+    ScreenScaffold("Report a Problem", "Nothing is sent automatically", onBack, heroIcon = Icons.Rounded.BugReport, accentWord = "Problem") {
         ProxyInputField(text, { text = it.take(4000) }, "What happened?", singleLine = false, minLines = 5)
         Spacer(Modifier.height(Space.s))
         GlassCard {
@@ -135,34 +136,6 @@ fun ReportScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 }
 
-@Composable
-fun AboutScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
-    val c = Tervyn.colors
-    val xrayVersion by produceState<String?>(null) { value = withContext(Dispatchers.IO) { vm.c.xray.version() } }
-    ScreenScaffold("About Tervyn", null, onBack) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            TervynLogo(96.dp)
-            Spacer(Modifier.height(Space.m))
-            Text("Tervyn VPN", style = MaterialTheme.typography.headlineSmall, color = c.text)
-            Text("Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", color = c.text2)
-        }
-        Spacer(Modifier.height(Space.l))
-        GlassCard {
-            Text("A free, account-free Android VPN client. It routes traffic from Android's VpnService through HTTP CONNECT and SOCKS5 proxies, and through VLESS, VMess, Trojan and Shadowsocks servers via the official Xray-core.",
-                color = c.text2, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(Space.s))
-            Text("Engine: Kotlin user-space TCP/IP stack · Fake-DNS 198.18.0.0/15", color = c.text3, style = MaterialTheme.typography.labelSmall)
-            Text("Xray-core: ${xrayVersion ?: "not available on this ABI"}", color = c.text3, style = MaterialTheme.typography.labelSmall)
-            Text("Package: com.tervyn.vpn", color = c.text3, style = MaterialTheme.typography.labelSmall)
-        }
-        Spacer(Modifier.height(Space.m))
-        GlassCard {
-            SettingsRow(Icons.Rounded.Policy, "Privacy Policy", null, { go(Routes.POLICY) })
-            SettingsRow(Icons.Rounded.Gavel, "Open Source Licenses", null, { go(Routes.LICENSES) })
-            SettingsRow(Icons.Rounded.QuestionAnswer, "Help & FAQ", null, { go(Routes.HELP) })
-        }
-    }
-}
 
 @Composable
 fun PrivacyPolicyScreen(onBack: () -> Unit) {
@@ -176,7 +149,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
         "Children" to "Tervyn is not directed at children and does not knowingly collect any personal data.",
         "Changes" to "Changes to this policy ship with app updates and are shown on this screen.",
     )
-    ScreenScaffold("Privacy Policy", null, onBack) {
+    ScreenScaffold("Privacy Policy", null, onBack, heroIcon = Icons.Rounded.Policy, accentWord = "Policy") {
         sections.forEach { (t, b) ->
             GlassCard {
                 Text(t, color = c.text, style = MaterialTheme.typography.titleSmall)
@@ -204,7 +177,7 @@ fun LicensesScreen(onBack: () -> Unit) {
         "ZXing (core)" to "Apache License 2.0 · © ZXing authors",
         "Material Icons" to "Apache License 2.0 · © Google",
     )
-    ScreenScaffold("Open Source Licenses", null, onBack) {
+    ScreenScaffold("Open Source Licenses", null, onBack, heroIcon = Icons.Rounded.Gavel, accentWord = "Licenses") {
         libs.forEach { (n, l) ->
             GlassCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {

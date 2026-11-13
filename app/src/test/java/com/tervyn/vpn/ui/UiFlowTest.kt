@@ -59,7 +59,7 @@ class UiFlowTest {
         // DataStore's delegate is process-wide, so a previous test in this JVM may already have onboarded.
         rule.waitUntil(10_000) {
             advance(100)
-            rule.onAllNodesWithText("One tap. Real VPN.").fetchSemanticsNodes().isNotEmpty() ||
+            rule.onAllNodesWithText("Welcome to").fetchSemanticsNodes().isNotEmpty() ||
                 rule.onAllNodesWithText("Tap to Connect").fetchSemanticsNodes().isNotEmpty()
         }
         if (rule.onAllNodesWithText("Tap to Connect").fetchSemanticsNodes().isNotEmpty()) return
@@ -90,8 +90,10 @@ class UiFlowTest {
         rule.onNodeWithText("Settings").performClick(); advance()
         waitText("VPN Preferences")
         shot("06_settings")
-        rule.onNodeWithText("Free public servers").performScrollTo().performClick(); advance()
-        waitText("Where Tervyn gets its servers")
+        rule.onNodeWithText("Servers").performClick(); advance()
+        waitText("Source: ")
+        rule.onNodeWithText("Source: ", substring = true).performClick(); advance()
+        waitText("Configure")
         shot("07_sources")
     }
 

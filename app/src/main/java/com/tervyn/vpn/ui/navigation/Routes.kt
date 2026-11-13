@@ -42,4 +42,5 @@ object Routes {
     const val PROXIO = "proxio"
     const val FREE_SOURCES = "free_sources"
     const val THEME = "theme"
+    const val TERMS = "terms"
 }

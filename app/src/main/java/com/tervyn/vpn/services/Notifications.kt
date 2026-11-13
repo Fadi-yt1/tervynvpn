@@ -28,7 +28,7 @@ object Notifications {
     private const val CH_SOUND = "vpn_events_sound"
     private const val CH_BOTH = "vpn_events_sound_vibrate"
 
-    enum class Kind { CONNECT, DISCONNECT, SWITCH, FAILURE }
+    enum class Kind { CONNECT, DISCONNECT, SWITCH, FAILURE, DATA }
 
     fun ensureChannels(ctx: Context) {
         if (Build.VERSION.SDK_INT < 26) return
@@ -91,8 +91,9 @@ object Notifications {
             Kind.DISCONNECT -> s.notifyDisconnect
             Kind.SWITCH -> s.notifySwitch
             Kind.FAILURE -> s.notifyFailure
+            Kind.DATA -> s.dataAlertMb > 0
         }
-        if (!enabled || !canPost(ctx)) return
+        if (!s.notificationsEnabled || !enabled || !canPost(ctx)) return
         val ch = when {
             s.sound && s.vibration -> CH_BOTH
             s.sound -> CH_SOUND

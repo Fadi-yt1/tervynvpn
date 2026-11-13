@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.TrackChanges
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +45,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tervyn.vpn.security.PinHasher
 import com.tervyn.vpn.ui.MainViewModel
 import com.tervyn.vpn.ui.components.AnimatedGlobe
@@ -97,10 +99,10 @@ fun OnboardingScreen(vm: MainViewModel, connect: () -> Unit) {
             .padding(horizontal = Space.gutter).verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(Space.xl))
-        TervynLogo(72.dp)
-        Spacer(Modifier.height(Space.xl))
-        if (page < pages.size) {
+        if (page != 0) { Spacer(Modifier.height(Space.xl)); TervynLogo(72.dp); Spacer(Modifier.height(Space.xl)) }
+        if (page == 0) {
+            WelcomePage(onStart = { page = 1 }, onSkip = { page = pages.size })
+        } else if (page < pages.size) {
             val p = pages[page]
             Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
                 AnimatedGlobe(Modifier.fillMaxSize(), active = true)
@@ -174,4 +176,52 @@ fun LockScreen(vm: MainViewModel, biometricEnabled: Boolean, onBiometric: () -> 
         LaunchedEffect(attempts) { if (attempts >= 5) { delay(30_000); attempts = 0; error = null } }
         Spacer(Modifier.width(1.dp))
     }
+}
+
+
+@Composable
+private fun WelcomeFeature(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, tint: androidx.compose.ui.graphics.Color, modifier: Modifier) {
+    val c = Tervyn.colors
+    com.tervyn.vpn.ui.components.GlassCard(modifier, padding = androidx.compose.foundation.layout.PaddingValues(Space.m)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(icon, tint, 44.dp)
+            Spacer(Modifier.width(Space.s))
+            Column {
+                Text(title, color = c.text, style = MaterialTheme.typography.titleSmall)
+                Text(sub, color = c.text2, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WelcomePage(onStart: () -> Unit, onSkip: () -> Unit) {
+    val c = Tervyn.colors
+    Row(Modifier.fillMaxWidth().padding(top = Space.s), horizontalArrangement = Arrangement.End) {
+        androidx.compose.material3.TextButton(onSkip) { Text("Skip ›", color = c.text) }
+    }
+    Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
+        AnimatedGlobe(Modifier.size(300.dp), active = true)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            TervynLogo(88.dp)
+            com.tervyn.vpn.ui.components.GlowShield(Icons.Rounded.Lock, 170.dp)
+        }
+    }
+    Text("Welcome to", style = MaterialTheme.typography.headlineSmall, color = c.text)
+    Text(com.tervyn.vpn.ui.components.twoTone("Tervyn VPN", "VPN", c.text, c.blue), style = MaterialTheme.typography.displaySmall.copy(fontSize = 40.sp))
+    Text("Browse Freely. Stay in Control.", style = MaterialTheme.typography.titleMedium, color = c.text2)
+    Spacer(Modifier.height(Space.l))
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        WelcomeFeature(Icons.Rounded.Bolt, "Fastest server", "Picked automatically", c.blue, Modifier.weight(1f))
+        WelcomeFeature(Icons.Rounded.Shield, "Verified HTTPS", "Every server tested", c.green, Modifier.weight(1f))
+    }
+    Spacer(Modifier.height(Space.s))
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        WelcomeFeature(Icons.Rounded.VisibilityOff, "Hide your IP", "From the sites you visit", c.purple, Modifier.weight(1f))
+        WelcomeFeature(Icons.Rounded.Public, "Your sites only", "Or route all apps", c.amber, Modifier.weight(1f))
+    }
+    Spacer(Modifier.height(Space.xl))
+    NeonButton("Get Started  ›", onStart, Modifier.fillMaxWidth())
+    Spacer(Modifier.height(Space.s))
+    Text("Free · No account · No ads", color = c.text2, style = MaterialTheme.typography.bodySmall)
 }

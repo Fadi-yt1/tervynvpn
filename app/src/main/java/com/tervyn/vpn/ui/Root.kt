@@ -191,8 +191,8 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             }
             composable(Routes.IP) { CheckIpScreen(vm, back) }
             composable(Routes.ADVANCED) { AdvancedConfigScreen(vm, back) }
-            composable(Routes.ADD_PROXY) { AddProxyScreen(vm, back) }
-            composable(Routes.IMPORT_LINK) { ImportLinkScreen(vm, back) }
+            composable(Routes.ADD_PROXY) { AddProxyScreen(vm, back, go) }
+            composable(Routes.IMPORT_LINK) { ImportLinkScreen(vm, back, go) }
             composable(Routes.SUBSCRIPTIONS) { SubscriptionsScreen(vm, back, go) }
             composable(Routes.LIST_IMPORT) { ListImportScreen(vm, back) }
             composable(Routes.INTEGRATION) { IntegrationScreen(vm, back) }
@@ -206,9 +206,9 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             composable(Routes.PRIVACY) { PrivacyCenterScreen(vm, back, go) }
             composable(Routes.PERMISSIONS) { PermissionsScreen(vm, back, connect) }
             composable(Routes.QUICK) { QuickSettingsScreen(vm, back) }
-            composable(Routes.SPEED) { SpeedTestScreen(vm, back) }
+            composable(Routes.SPEED) { SpeedTestScreen(vm, back, go) }
             composable(Routes.HISTORY) { HistoryScreen(vm, back) }
-            composable(Routes.DIAGNOSTICS) { DiagnosticsScreen(vm, back) }
+            composable(Routes.DIAGNOSTICS) { DiagnosticsScreen(vm, back, go) }
             composable(Routes.STATS) { StatsScreen(vm, back) }
             composable(Routes.NOTIFICATIONS) { NotificationsScreen(vm, back) }
             composable(Routes.APP_LOCK) { AppLockScreen(vm, back, activity) }
@@ -222,6 +222,7 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             composable(Routes.PROXIO) { ProxioScreen(vm, back) }
             composable(Routes.FREE_SOURCES) { FreeSourcesScreen(vm, back) }
             composable(Routes.THEME) { ThemeScreen(vm, back) }
+            composable(Routes.TERMS) { TermsScreen(back) }
         }
     }
     // Follow the connection flow: show the connecting screen while busy from Home.

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.BugReport
@@ -66,44 +67,6 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@Composable
-fun SpeedTestScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val st by vm.speed.collectAsState()
-    val status by vm.status.collectAsState()
-    val past by vm.speedTests.collectAsState()
-    ScreenScaffold("Speed Test", if (status.isConnected) "Through the VPN (${status.server?.name})" else "Direct connection (VPN is off)", onBack) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            SpeedGauge(st.liveMbps ?: st.downMbps, 100.0, "Download", "Mbps")
-            SpeedGauge(st.upMbps, 50.0, "Upload", "Mbps")
-        }
-        Spacer(Modifier.height(Space.m))
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            StatTile("Latency", st.latency?.let { "$it ms" } ?: "—", Icons.Rounded.Timer, Modifier.weight(1f))
-            StatTile("Jitter", st.jitter?.let { "$it ms" } ?: "—", Icons.Rounded.Insights, Modifier.weight(1f), c.purple)
-            StatTile("Request loss", st.loss?.let { "$it%" } ?: "—", Icons.Rounded.Hub, Modifier.weight(1f), c.amber)
-        }
-        Spacer(Modifier.height(Space.m))
-        if (st.running) Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(20.dp), color = c.cyan, strokeWidth = 2.dp); Spacer(Modifier.width(Space.s)); Text(st.stage, color = c.text2)
-        }
-        st.error?.let { NotificationCard("Speed test failed", it, Tone.ERROR) }
-        Spacer(Modifier.height(Space.m))
-        NeonButton(if (st.running) "Testing…" else "Start test", { vm.runSpeedTest() }, Modifier.fillMaxWidth(), icon = Icons.Rounded.PlayArrow, enabled = !st.running)
-        Spacer(Modifier.height(Space.s))
-        Text("Measured live against Cloudflare's speed test servers (speed.cloudflare.com). Latency is the HTTPS request round-trip; \"request loss\" is the share of failed probe requests, not ICMP packet loss.",
-            color = c.text3, style = MaterialTheme.typography.labelSmall)
-        SectionHeader("Previous results", Icons.Rounded.History)
-        if (past.isEmpty()) Text("No speed tests yet.", color = c.text2)
-        past.take(15).forEach { r ->
-            GlassCard {
-                Text(r.title, color = c.text, style = MaterialTheme.typography.titleSmall)
-                Text("${r.summary} · ${Format.ago(r.time)}", color = c.text2, style = MaterialTheme.typography.bodySmall)
-            }
-            Spacer(Modifier.height(Space.s))
-        }
-    }
-}
 
 private fun dayStart(t: Long): Long = Calendar.getInstance().apply { timeInMillis = t; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.timeInMillis
 
@@ -125,77 +88,7 @@ fun BarChart(values: List<Pair<String, Double>>, modifier: Modifier = Modifier) 
     }
 }
 
-@Composable
-fun HistoryScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val history by vm.history.collectAsState()
-    val now = System.currentTimeMillis()
-    val dayFmt = remember { SimpleDateFormat("EEE", Locale.getDefault()) }
-    val timeFmt = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
-    val today = dayStart(now)
-    val week = (6 downTo 0).map { d -> today - d * 86_400_000L }
-    fun traffic(e: HistoryEntity) = (e.bytesDown + e.bytesUp).toDouble()
-    fun dur(e: HistoryEntity) = ((e.endedAt ?: now) - e.startedAt).coerceAtLeast(0)
-    val perDay = week.map { start -> dayFmt.format(Date(start)) to history.filter { it.startedAt in start until start + 86_400_000L }.sumOf(::traffic) / (1 shl 20) }
-    val todayList = history.filter { it.startedAt >= today }
-    ScreenScaffold("History & Analytics", "Stored only on this phone", onBack, actions = {
-        IconButton(onClick = { vm.clearHistory() }) { Icon(Icons.Rounded.DeleteSweep, "Clear history", tint = c.text2) }
-    }) {
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            StatTile("Today", Format.duration(todayList.sumOf(::dur)), Icons.Rounded.Timer, Modifier.weight(1f))
-            StatTile("Data today", Format.bytes(todayList.sumOf { it.bytesDown + it.bytesUp }), Icons.Rounded.ArrowDownward, Modifier.weight(1f), c.purple)
-            StatTile("Sessions", todayList.size.toString(), Icons.Rounded.History, Modifier.weight(1f), c.green)
-        }
-        SectionHeader("Last 7 days (MB)", Icons.Rounded.Insights)
-        GlassCard { BarChart(perDay) }
-        SectionHeader("Sessions", Icons.Rounded.History)
-        if (history.isEmpty()) EmptyState(Icons.Rounded.History, "No sessions yet", "Connections you make appear here.")
-        history.take(100).forEach { e ->
-            GlassCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CountryFlag(e.countryCode, 36.dp)
-                    Spacer(Modifier.width(Space.m))
-                    Column(Modifier.weight(1f)) {
-                        Text(e.serverName, color = c.text, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                        Text("${timeFmt.format(Date(e.startedAt))} · ${Format.duration(dur(e))} · ${e.protocol}", color = c.text2, style = MaterialTheme.typography.bodySmall)
-                        Text("↓ ${Format.bytes(e.bytesDown)}  ↑ ${Format.bytes(e.bytesUp)} · ${e.mode.replace('_', ' ').lowercase()}", color = c.text3, style = MaterialTheme.typography.labelSmall)
-                    }
-                    Pill(e.status.lowercase().replaceFirstChar { it.uppercase() }, when (e.status) { "CONNECTED" -> c.green; "FAILED" -> c.red; else -> c.text2 })
-                }
-            }
-            Spacer(Modifier.height(Space.s))
-        }
-    }
-}
 
-@Composable
-fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val checks by vm.diagnostics.collectAsState()
-    val running by vm.diagRunning.collectAsState()
-    LaunchedEffect(Unit) { if (checks.isEmpty()) vm.runDiagnostics() }
-    ScreenScaffold("Network Diagnostics", "Real checks of your connection", onBack) {
-        checks.forEach { ch ->
-            GlassCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(when (ch.ok) { true -> Icons.Rounded.CheckCircle; false -> Icons.Rounded.Cancel; null -> Icons.Rounded.Help },
-                        null, tint = when (ch.ok) { true -> c.green; false -> c.red; null -> c.amber })
-                    Spacer(Modifier.width(Space.m))
-                    Column {
-                        Text(ch.name, color = c.text, style = MaterialTheme.typography.titleSmall)
-                        Text(ch.detail, color = c.text2, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-            Spacer(Modifier.height(Space.s))
-        }
-        if (running) Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(20.dp), color = c.cyan, strokeWidth = 2.dp); Spacer(Modifier.width(Space.s)); Text("Running checks…", color = c.text2)
-        }
-        Spacer(Modifier.height(Space.m))
-        NeonButton("Run again", { vm.runDiagnostics() }, Modifier.fillMaxWidth(), icon = Icons.Rounded.BugReport, enabled = !running)
-    }
-}
 
 @Composable
 fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
@@ -209,7 +102,7 @@ fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
         while (upHist.size > 60) upHist.removeAt(0)
     }
     val now = rememberNow(status.isConnected)
-    ScreenScaffold("Connection Statistics", if (status.isConnected) "Live" else "Not connected", onBack) {
+    ScreenScaffold("Connection Statistics", if (status.isConnected) "Live" else "Not connected", onBack, heroIcon = Icons.Rounded.Insights, accentWord = "Statistics") {
         GlassCard {
             Text("Throughput (last 60 s)", color = c.text, style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(Space.s))

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.icons.automirrored.rounded.Help
 import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Apps
@@ -219,67 +220,7 @@ fun SettingsScreen(vm: MainViewModel, go: (String) -> Unit, connect: () -> Unit)
     }
 }
 
-@Composable
-fun DnsScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val settings by vm.settings.collectAsState()
-    val s = settings ?: return
-    var custom by rememberSaveable { mutableStateOf(if (s.dohUrl in DohForwarder.PRESETS.values) "" else s.dohUrl) }
-    var lookup by rememberSaveable { mutableStateOf(s.ipLookupUrl) }
-    ScreenScaffold("DNS Settings", "How names are resolved", onBack) {
-        NotificationCard("Leak protection", "All Apps: every DNS query is answered by Tervyn; real lookups happen at the proxy or via DNS-over-HTTPS through the tunnel. " +
-            "Only My Sites: your sites resolve at the proxy; other names use the encrypted resolver below instead of your ISP.", Tone.INFO)
-        SectionHeader("Encrypted resolver (DNS-over-HTTPS)")
-        GlassCard {
-            DohForwarder.PRESETS.forEach { (name, url) ->
-                SettingsRow(Icons.Rounded.Dns, name, url, { vm.updateSettings { it.copy(dohUrl = url) } }) {
-                    if (s.dohUrl == url) Icon(Icons.Rounded.VerifiedUser, "Selected", tint = c.green)
-                }
-            }
-            ProxyInputField(custom, { custom = it.trim() }, "Custom DoH URL (https://…/dns-query)", keyboardType = KeyboardType.Uri)
-            Spacer(Modifier.height(Space.s))
-            NeonButton("Use custom resolver", {
-                if (custom.startsWith("https://")) vm.updateSettings { it.copy(dohUrl = custom) } else vm.toast("Must start with https://")
-            }, Modifier.fillMaxWidth(), secondary = true, enabled = custom.isNotBlank())
-        }
-        SectionHeader("IP lookup service")
-        GlassCard {
-            ProxyInputField(lookup, { lookup = it.trim() }, "Lookup URL ({ip} is replaced)", keyboardType = KeyboardType.Uri)
-            Text("Used by Check My IP for city and ISP. Requests go through the VPN when connected.", color = c.text3, style = MaterialTheme.typography.labelSmall)
-            Spacer(Modifier.height(Space.s))
-            NeonButton("Save", {
-                if (lookup.startsWith("https://")) vm.updateSettings { it.copy(ipLookupUrl = lookup) } else vm.toast("Must start with https://")
-            }, Modifier.fillMaxWidth(), secondary = true)
-        }
-        Spacer(Modifier.height(Space.m))
-        NotificationCard("Android Private DNS", "If Private DNS is set to a specific hostname, Android sends DNS directly to that provider. In All Apps mode traffic is still tunnelled, but Only My Sites cannot recognise your sites. Choose Automatic or Off for Only My Sites.", Tone.WARNING)
-    }
-}
 
-@Composable
-fun PrivacyCenterScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
-    ScreenScaffold("Privacy & Security", "What Tervyn does — and doesn't do", onBack) {
-        NotificationCard("No account, no ads, no analytics", "Tervyn has no sign-up, shows no ads and sends no telemetry. History and settings are stored only on this phone.", Tone.SUCCESS)
-        Spacer(Modifier.height(Space.s))
-        NotificationCard("Credentials are encrypted", "Proxy passwords, share links and API keys are encrypted with an Android Keystore key that never leaves the device, and are excluded from backups. They are never written to logs.", Tone.SUCCESS)
-        Spacer(Modifier.height(Space.s))
-        NotificationCard("Verified HTTPS only", "Servers are only accepted after an HTTPS test with full certificate and hostname verification. Insecure TLS cannot be enabled.", Tone.SUCCESS)
-        Spacer(Modifier.height(Space.s))
-        NotificationCard("DNS and IPv6 leak prevention", "In All Apps mode DNS is answered locally and IPv6 is captured and dropped, so neither bypasses the tunnel. UDP (including QUIC) is refused because proxies carry TCP only.", Tone.INFO)
-        Spacer(Modifier.height(Space.s))
-        NotificationCard("Free servers are untrusted", "Free public proxies are run by unknown operators who can see unencrypted traffic and connection metadata. Do not use them for banking or sensitive logins. Tervyn cannot verify any operator's logging policy.", Tone.WARNING)
-        Spacer(Modifier.height(Space.s))
-        NotificationCard("No anonymity guarantee", "A VPN changes your IP address as seen by websites. It does not make you anonymous and does not stop tracking by accounts, cookies or browser fingerprinting.", Tone.WARNING)
-        Spacer(Modifier.height(Space.m))
-        GlassCard {
-            SettingsRow(Icons.Rounded.Lock, "App Lock & Biometrics", null, { go(Routes.APP_LOCK) })
-            SettingsRow(Icons.Rounded.Shield, "App Permissions", null, { go(Routes.PERMISSIONS) })
-            SettingsRow(Icons.Rounded.BugReport, "Run leak & network diagnostics", null, { go(Routes.DIAGNOSTICS) })
-            SettingsRow(Icons.Rounded.Policy, "Privacy Policy", null, { go(Routes.POLICY) })
-            SettingsRow(Icons.Rounded.DeleteSweep, "Clear history", null, { vm.clearHistory() })
-        }
-    }
-}
 
 @Composable
 fun PermissionsScreen(vm: MainViewModel, onBack: () -> Unit, connect: () -> Unit) {
@@ -291,7 +232,7 @@ fun PermissionsScreen(vm: MainViewModel, onBack: () -> Unit, connect: () -> Unit
     val notifGranted = remember(refresh) { Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED }
     val pm = ctx.getSystemService(PowerManager::class.java)
     val battery = remember(refresh) { pm.isIgnoringBatteryOptimizations(ctx.packageName) }
-    ScreenScaffold("App Permissions", "Tervyn only asks for what a VPN needs", onBack) {
+    ScreenScaffold("App Permissions & VPN Protection", "Tervyn only asks for what a VPN needs.", onBack, heroIcon = Icons.Rounded.Lock, accentWord = "VPN Protection") {
         GlassCard {
             SettingsRow(Icons.Rounded.Shield, "VPN connection", if (vpnGranted) "Granted" else "Requested when you first connect", if (!vpnGranted) connect else null,
                 valueColor = if (vpnGranted) c.green else c.amber)
@@ -318,7 +259,7 @@ fun QuickSettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Quick Settings & Notifications", null, onBack) {
+    ScreenScaffold("Quick Settings & Notifications", null, onBack, heroIcon = Icons.Rounded.Widgets, accentWord = "Notifications") {
         GlassCard {
             SettingsRow(Icons.Rounded.Widgets, "Add Quick Settings tile", "Toggle Tervyn from the notification shade", {
                 if (Build.VERSION.SDK_INT >= 33) {
@@ -339,77 +280,14 @@ fun QuickSettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     }
 }
 
-@Composable
-fun NotificationsScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val c = Tervyn.colors
-    val settings by vm.settings.collectAsState()
-    val events by vm.events.collectAsState()
-    val s = settings ?: return
-    ScreenScaffold("VPN Connection Notifications", "Alerts and recent events", onBack) {
-        GlassCard {
-            ToggleSetting(Icons.Rounded.Shield, "Connected", null, s.notifyConnect, { v -> vm.updateSettings { it.copy(notifyConnect = v) } })
-            ToggleSetting(Icons.Rounded.PowerSettingsNew, "Disconnected", null, s.notifyDisconnect, { v -> vm.updateSettings { it.copy(notifyDisconnect = v) } })
-            ToggleSetting(Icons.Rounded.Bolt, "Server switched", null, s.notifySwitch, { v -> vm.updateSettings { it.copy(notifySwitch = v) } })
-            ToggleSetting(Icons.Rounded.BugReport, "Connection problems", null, s.notifyFailure, { v -> vm.updateSettings { it.copy(notifyFailure = v) } })
-        }
-        SectionHeader("Recent events", Icons.Rounded.History)
-        if (events.isEmpty()) Text("No events yet.", color = c.text2)
-        events.forEach { e ->
-            NotificationCard("${e.title} · ${Format.ago(e.time)}", e.summary, when {
-                e.title.contains("fail", true) || e.title.contains("unavailable", true) -> Tone.ERROR
-                e.title.contains("Connected") -> Tone.SUCCESS
-                else -> Tone.INFO
-            })
-            Spacer(Modifier.height(Space.s))
-        }
-    }
-}
 
-@Composable
-fun AppLockScreen(vm: MainViewModel, onBack: () -> Unit, activity: FragmentActivity) {
-    val c = Tervyn.colors
-    val settings by vm.settings.collectAsState()
-    val pinHash by vm.pinHash.collectAsState()
-    val s = settings ?: return
-    var pin by remember { mutableStateOf("") }
-    var pin2 by remember { mutableStateOf("") }
-    val canBio = remember {
-        BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS
-    }
-    ScreenScaffold("App Lock & Biometrics", "Protect Tervyn with a PIN", onBack) {
-        if (pinHash == null || !s.appLock) {
-            GlassCard {
-                Text("Create a PIN (4–8 digits)", color = c.text, style = MaterialTheme.typography.titleSmall)
-                ProxyInputField(pin, { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, "PIN", keyboardType = KeyboardType.NumberPassword, secret = true)
-                ProxyInputField(pin2, { if (it.length <= 8 && it.all(Char::isDigit)) pin2 = it }, "Repeat PIN", keyboardType = KeyboardType.NumberPassword, secret = true,
-                    error = if (pin2.isNotEmpty() && pin2 != pin) "PINs do not match" else null)
-                Spacer(Modifier.height(Space.s))
-                NeonButton("Enable App Lock", { vm.setPin(pin); pin = ""; pin2 = ""; vm.toast("App lock enabled") }, Modifier.fillMaxWidth(),
-                    enabled = PinHasher.isValidPin(pin) && pin == pin2, icon = Icons.Rounded.Pin)
-            }
-        } else {
-            GlassCard {
-                ToggleSetting(Icons.Rounded.Fingerprint, "Fingerprint / face unlock", if (canBio) "Uses Android biometrics (face where supported)" else "No biometrics enrolled on this device",
-                    s.biometric, { v -> if (v) showBiometric(activity) { vm.updateSettings { it.copy(biometric = true) } } else vm.updateSettings { it.copy(biometric = false) } }, enabled = canBio)
-                SettingsRow(Icons.Rounded.Lock, "Lock after", "${s.lockTimeoutSec} s in background", {
-                    val next = when (s.lockTimeoutSec) { 0 -> 30; 30 -> 60; 60 -> 300; else -> 0 }
-                    vm.updateSettings { it.copy(lockTimeoutSec = next) }
-                })
-            }
-            Spacer(Modifier.height(Space.m))
-            NeonButton("Turn off App Lock", { vm.setPin(null) }, Modifier.fillMaxWidth(), danger = true)
-        }
-        Spacer(Modifier.height(Space.m))
-        NotificationCard("How it's stored", "The PIN is stored only as a salted PBKDF2 hash. Biometric data never leaves Android's secure hardware.", Tone.INFO)
-    }
-}
 
 @Composable
 fun ThemeScreen(vm: MainViewModel, onBack: () -> Unit) {
     val c = Tervyn.colors
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Theme", "Tervyn is designed for dark mode", onBack) {
+    ScreenScaffold("Theme", "Tervyn is designed for dark mode", onBack, heroIcon = Icons.Rounded.Palette, accentWord = "Theme") {
         GlassCard {
             AppTheme.entries.forEach { t ->
                 SettingsRow(Icons.Rounded.Palette, t.label, null, { vm.updateSettings { it.copy(theme = t) } }) {

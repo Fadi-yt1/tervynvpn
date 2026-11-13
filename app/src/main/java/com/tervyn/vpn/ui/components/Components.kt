@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PowerSettingsNew
@@ -246,7 +247,8 @@ fun VPNPowerButton(status: VpnStatus, onClick: () -> Unit, modifier: Modifier = 
             drawCircle(Brush.radialGradient(listOf(Color(0xFF13245A), Color(0xFF060E28)), center, r * 0.72f), r * 0.72f)
             drawCircle(Brush.sweepGradient(listOf(color, c.purple, color)), r * 0.72f, style = Stroke(width = r * 0.035f))
         }
-        Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(size * 0.3f))
+        if (status.isConnected) GlowShield(Icons.Rounded.Check, size * 0.78f, c.green)
+        else Icon(Icons.Rounded.PowerSettingsNew, null, tint = Color.White, modifier = Modifier.size(size * 0.3f))
     }
 }
 
@@ -564,7 +566,10 @@ fun SectionHeader(title: String, icon: ImageVector? = null, modifier: Modifier =
     }
 }
 
-/** Standard secondary screen: back button, title, subtitle, scrolling content with gutters. */
+/**
+ * Standard screen. With [heroIcon] it uses the hero layout (brand bar, glowing shield art, two-tone title);
+ * otherwise a compact title bar (used by the bottom-navigation tabs).
+ */
 @Composable
 fun ScreenScaffold(
     title: String,
@@ -572,27 +577,41 @@ fun ScreenScaffold(
     onBack: (() -> Unit)?,
     actions: @Composable RowScope.() -> Unit = {},
     scrollable: Boolean = true,
+    heroIcon: ImageVector? = null,
+    accentWord: String? = null,
+    heroAccent: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = Tervyn.colors
     Column(Modifier.fillMaxSize().background(c.backgroundGradient).statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = Space.s, vertical = Space.s), verticalAlignment = Alignment.CenterVertically) {
-            if (onBack != null) {
-                IconButton(onClick = onBack, modifier = Modifier.padding(end = 4.dp).clip(CircleShape).background(c.card)) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = c.text)
-                }
-            } else Spacer(Modifier.width(Space.s))
-            Column(Modifier.weight(1f).padding(start = Space.s)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.text2, maxLines = 2)
+        val body: @Composable ColumnScope.() -> Unit = {
+            if (heroIcon != null) {
+                HeroHeader(title, accentWord, subtitle, heroIcon, heroAccent ?: c.cyan)
+                Spacer(Modifier.height(Space.s))
             }
-            actions()
+            Column(Modifier.padding(horizontal = Space.gutter)) {
+                content()
+                Spacer(Modifier.height(Space.xxl))
+            }
         }
-        val inner = Modifier.fillMaxWidth().weight(1f).padding(horizontal = Space.gutter)
-        Column(if (scrollable) inner.verticalScroll(rememberScrollState()) else inner) {
-            content()
-            Spacer(Modifier.height(Space.xxl))
+        if (heroIcon != null) {
+            BrandBar(onBack, actions = actions)
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = Space.s, vertical = Space.s), verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack, modifier = Modifier.padding(end = 4.dp).clip(CircleShape).background(c.card)) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = c.text)
+                    }
+                } else Spacer(Modifier.width(Space.s))
+                Column(Modifier.weight(1f).padding(start = Space.s)) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.text2, maxLines = 2)
+                }
+                actions()
+            }
         }
+        val inner = Modifier.fillMaxWidth().weight(1f)
+        Column(if (scrollable) inner.verticalScroll(rememberScrollState()) else inner, content = body)
     }
 }
 
