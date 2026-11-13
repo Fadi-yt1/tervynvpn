@@ -26,6 +26,15 @@ object XrayConfig {
 
     fun build(outbound: XrayOutbound, local: LocalSocks, logLevel: String = "warning"): String = buildJsonObject {
         putJsonObject("log") { put("loglevel", logLevel); put("access", "none") }
+        // Server host names are resolved by Xray's own DNS-over-HTTPS client (IP-literal endpoints, no bootstrap),
+        // independent of the platform resolver.
+        putJsonObject("dns") {
+            putJsonArray("servers") {
+                add(JsonPrimitive("https+local://1.1.1.1/dns-query"))
+                add(JsonPrimitive("https+local://8.8.8.8/dns-query"))
+            }
+            put("queryStrategy", "UseIP")
+        }
         putJsonArray("inbounds") {
             add(buildJsonObject {
                 put("tag", "socks-in")
@@ -43,17 +52,7 @@ object XrayConfig {
             add(outboundJson(outbound, "proxy"))
             add(buildJsonObject { put("tag", "block"); put("protocol", "blackhole") })
         }
-        putJsonObject("routing") {
-            put("domainStrategy", "AsIs")
-            putJsonArray("rules") {
-                // Never let the local inbound loop back into private ranges through the proxy.
-                add(buildJsonObject {
-                    put("type", "field")
-                    putJsonArray("ip") { add(JsonPrimitive("127.0.0.0/8")) }
-                    put("outboundTag", "block")
-                })
-            }
-        }
+        putJsonObject("routing") { put("domainStrategy", "AsIs") }
     }.toString()
 
     fun outboundJson(o: XrayOutbound, tag: String): JsonObject = buildJsonObject {
@@ -81,13 +80,17 @@ object XrayConfig {
                 XrayProtocol.SOCKS, XrayProtocol.HTTP -> if (o.username.isNotEmpty()) { put("user", o.username); put("pass", o.password) }
             }
         }
-        if (o.protocol != XrayProtocol.SHADOWSOCKS) put("streamSettings", streamSettings(o))
+        put("streamSettings", if (o.protocol == XrayProtocol.SHADOWSOCKS) buildJsonObject {
+            put("network", "raw")
+            putJsonObject("sockopt") { put("domainStrategy", "UseIP") }
+        } else streamSettings(o))
     }
 
     private fun streamSettings(o: XrayOutbound): JsonObject = buildJsonObject {
         val network = if (o.network == "tcp") "raw" else o.network
         put("network", network)
         put("security", o.security)
+        putJsonObject("sockopt") { put("domainStrategy", "UseIP") }
         when (o.security) {
             "tls" -> putJsonObject("tlsSettings") {
                 put("serverName", o.sni.ifEmpty { o.host.ifEmpty { o.address } })

@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -82,6 +83,10 @@ android {
             isReturnDefaultValues = true
         }
     }
+    sourceSets {
+        // Xray-core executables (scripts/build-xray.sh or scripts/fetch-xray.sh) packaged as libxray.so per ABI.
+        getByName("main") { jniLibs.directories.add(rootProject.file("xray/android").path) }
+    }
     lint {
         abortOnError = false
         checkReleaseBuilds = true
@@ -91,6 +96,34 @@ android {
 kotlin {
     jvmToolchain(21)
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+}
+
+/** Verifies packaged Xray binaries against xray/android/SHA256SUMS (or warns if they are missing). */
+val verifyXray by tasks.registering {
+    val dir = rootProject.file("xray/android")
+    inputs.files(fileTree(dir) { include("*/libxray.so", "SHA256SUMS*") }).optional()
+    doLast {
+        val bins = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86").map { File(dir, "$it/libxray.so") }
+        if (bins.none { it.exists() }) {
+            logger.warn("Xray-core binaries not found in xray/android. Advanced protocols will be unavailable. Run scripts/build-xray.sh or scripts/fetch-xray.sh.")
+            return@doLast
+        }
+        val sums = listOf("SHA256SUMS", "SHA256SUMS.official").map { File(dir, it) }.filter { it.exists() }
+            .flatMap { it.readLines() }.filter { it.isNotBlank() }
+            .associate { it.substringAfter("  ").trim() to it.substringBefore("  ").trim() }
+        bins.filter { it.exists() }.forEach { f ->
+            val rel = f.parentFile.name + "/libxray.so"
+            val actual = MessageDigest.getInstance("SHA-256").digest(f.readBytes()).joinToString("") { "%02x".format(it) }
+            val expected = sums[rel] ?: throw GradleException("No checksum recorded for $rel")
+            if (expected != actual) throw GradleException("SHA-256 mismatch for $rel: expected $expected, got $actual")
+        }
+        logger.lifecycle("Xray-core binaries verified (${bins.count { it.exists() }} ABIs)")
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyXray) }
+
+tasks.withType<Test>().configureEach {
+    systemProperty("xray.host.binary", rootProject.file("xray/host/xray").absolutePath)
 }
 
 ksp {

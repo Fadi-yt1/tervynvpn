@@ -161,6 +161,11 @@ object Links {
         val security = (q["security"] ?: "none").lowercase()
         if (security !in listOf("none", "tls", "reality")) throw LinkParseException("Unsupported security: $security")
         if (security == "reality" && q["pbk"].isNullOrEmpty()) throw LinkParseException("REALITY link is missing pbk (public key)")
+        val encryption = q["encryption"]?.ifEmpty { null } ?: "none"
+        if (security == "none" && encryption == "none" && !isPrivateAddress(p.host)) {
+            // Xray-core refuses unencrypted VLESS to public servers; report it at import time.
+            throw LinkParseException("This VLESS server uses no TLS/REALITY, so traffic would be unencrypted. Xray-core rejects it.")
+        }
         return XrayOutbound(
             protocol = XrayProtocol.VLESS, address = p.host, port = p.port, name = p.fragment, id = id,
             encryption = q["encryption"]?.ifEmpty { null } ?: "none", flow = q["flow"] ?: "",
@@ -242,6 +247,12 @@ object Links {
         val method = userInfo.substringBefore(':').lowercase()
         val password = userInfo.substringAfter(':', "")
         if (method !in ssCiphers) throw LinkParseException("Unsupported Shadowsocks cipher: $method")
+        if (method.startsWith("2022-")) {
+            val need = if (method.contains("128")) 16 else 32
+            val keys = password.split(':')
+            val ok = keys.all { k -> runCatching { Base64.getDecoder().decode(k).size == need }.getOrDefault(false) }
+            if (!ok) throw LinkParseException("$method needs a base64 key of $need bytes")
+        }
         if (!ProxyList.isValidHost(hp.first) || !ProxyList.validPort(hp.second)) throw LinkParseException("Invalid host or port")
         return XrayOutbound(protocol = XrayProtocol.SHADOWSOCKS, address = hp.first, port = hp.second, name = name, method = method, password = password)
     }
@@ -303,6 +314,17 @@ object Links {
     }
 
     // ---- helpers ---------------------------------------------------------------------------
+
+    /** RFC 1918 / loopback / link-local / CGNAT IPv4, unique-local IPv6, or a .local/.lan name. */
+    fun isPrivateAddress(host: String): Boolean {
+        if (ProxyList.isIpv4(host)) {
+            val p = host.split('.').map { it.toInt() }
+            return p[0] == 10 || p[0] == 127 || (p[0] == 172 && p[1] in 16..31) || (p[0] == 192 && p[1] == 168) ||
+                (p[0] == 169 && p[1] == 254) || (p[0] == 100 && p[1] in 64..127)
+        }
+        val h = host.lowercase()
+        return h.startsWith("fc") || h.startsWith("fd") || h == "::1" || h.endsWith(".local") || h.endsWith(".lan") || h == "localhost"
+    }
 
     private val uuidRegex = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 

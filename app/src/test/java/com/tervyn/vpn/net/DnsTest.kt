@@ -40,11 +40,14 @@ class DnsTest {
 
     @Test fun fakeDnsEvictsLru() {
         val f = FakeDns(capacity = 3)
-        val a = f.ipFor("a.ex"); f.ipFor("b.ex"); f.ipFor("c.ex")
+        val a = f.ipFor("a.ex"); val b = f.ipFor("b.ex"); f.ipFor("c.ex")
         f.ipFor("a.ex") // touch a
-        val d = f.ipFor("d.ex") // evicts b
-        assertNull(f.domainFor(Packets.ipFromString("198.18.1.1")))
-        assertEquals("a.ex", f.domainFor(a)); assertEquals("d.ex", f.domainFor(d))
+        val d = f.ipFor("d.ex") // evicts b (least recently used) and recycles its address
+        assertEquals(b, d)
+        assertEquals("d.ex", f.domainFor(b))
+        assertEquals("a.ex", f.domainFor(a))
+        assertEquals(3, f.size())
+        assertNull(f.domainFor(Packets.ipFromString("198.18.200.1")))
     }
 
     @Test fun responderRoutesAndForwards() = runBlocking {

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tervyn brand mark: a geometric, forward-leaning "T" with an orbit swoosh. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- soft glow behind the letter -->
+    <path android:pathData="M54,54m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="54" android:gradientRadius="26">
+                <item android:offset="0" android:color="#5500B8FF"/>
+                <item android:offset="1" android:color="#0000B8FF"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- top bar -->
+    <path android:pathData="M31,33.5 L84,33.5 C82.5,37.5 80.5,41 76.5,43 L59.5,43 C52,43 44,45 36.5,47 L27,47 C28,42 29,37.5 31,33.5 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="27" android:startY="34" android:endX="84" android:endY="46">
+                <item android:offset="0" android:color="#FF7CF6FF"/>
+                <item android:offset="0.45" android:color="#FF00B4FF"/>
+                <item android:offset="1" android:color="#FF3A43FF"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- stem -->
+    <path android:pathData="M51,45 L64,43.5 L53.5,79 C52.8,81 51.5,82 49.5,82 L41,82 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="58" android:startY="44" android:endX="44" android:endY="82">
+                <item android:offset="0" android:color="#FF1E7BFF"/>
+                <item android:offset="0.6" android:color="#FF4C2BFF"/>
+                <item android:offset="1" android:color="#FFA100FF"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- highlight edge -->
+    <path android:pathData="M31,33.5 L84,33.5 L83,35.5 L30.2,35.5 Z" android:fillColor="#CCFFFFFF"/>
+    <!-- orbit swoosh -->
+    <path android:pathData="M24,70 C30,58 60,46 86,40 C70,48 46,60 30,72 C27,74 24,73 24,70 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="24" android:startY="72" android:endX="86" android:endY="40">
+                <item android:offset="0" android:color="#3300E5FF"/>
+                <item android:offset="0.5" android:color="#EE00E5FF"/>
+                <item android:offset="1" android:color="#FF9CF9FF"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

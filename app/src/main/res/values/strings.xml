@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tervyn VPN</string>
+    <string name="tile_label">Tervyn VPN</string>
+    <string name="share_add_label">Add to Tervyn VPN</string>
+</resources>

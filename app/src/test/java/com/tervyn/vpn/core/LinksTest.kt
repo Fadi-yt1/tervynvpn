@@ -21,7 +21,7 @@ class LinksTest {
     @Test fun vlessGrpcXhttpHttpupgrade() {
         assertEquals("grpc", Links.parse("vless://$uuid@h.example:443?security=tls&type=grpc&serviceName=svc&mode=multi").network)
         assertEquals("xhttp", Links.parse("vless://$uuid@h.example:443?security=tls&type=xhttp&path=%2Fx&mode=packet-up").network)
-        assertEquals("httpupgrade", Links.parse("vless://$uuid@h.example:80?type=httpupgrade&path=%2Fu").network)
+        assertEquals("httpupgrade", Links.parse("vless://$uuid@h.example:443?security=tls&type=httpupgrade&path=%2Fu").network)
     }
     @Test fun vmess() {
         val json = """{"v":"2","ps":"vm","add":"vm.example.com","port":"443","id":"$uuid","aid":"0","scy":"auto","net":"ws","type":"none","host":"vm.example.com","path":"/v","tls":"tls","sni":"vm.example.com"}"""
@@ -40,13 +40,19 @@ class LinksTest {
         val legacy = Base64.getEncoder().encodeToString("chacha20-ietf-poly1305:pw@1.2.3.4:8389".toByteArray())
         val b = Links.parse("ss://$legacy#L")
         assertEquals("chacha20-ietf-poly1305", b.method); assertEquals("1.2.3.4", b.address)
-        val c = Links.parse("ss://2022-blake3-aes-128-gcm:YctPZ6U7xPPcU%2Bgp3u%2B0tx%2FtRizJN9K8y%2BuKlW2qjlI%3D@h.example:443")
+        val c = Links.parse("ss://2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw%3D%3D@h.example:443")
         assertEquals("2022-blake3-aes-128-gcm", c.method); assertTrue(c.password.endsWith("="))
+        // 32-byte key for a 16-byte cipher is rejected (Xray would refuse it too)
+        assertTrue(runCatching { Links.parse("ss://2022-blake3-aes-128-gcm:YctPZ6U7xPPcU%2Bgp3u%2B0tx%2FtRizJN9K8y%2BuKlW2qjlI%3D@h.example:443") }.isFailure)
     }
     @Test fun insecureIsFlaggedNotHonoured() {
         val o = Links.parse("trojan://p@h.example:443?allowInsecure=1")
         assertTrue(o.insecureRequested)
         assertTrue(!com.tervyn.vpn.xray.XrayConfig.build(o, com.tervyn.vpn.xray.XrayConfig.LocalSocks(1, "u", "p")).contains("allowInsecure"))
+    }
+    @Test fun plaintextVlessRejectedExceptPrivate() {
+        assertTrue(runCatching { Links.parse("vless://$uuid@h.example.com:80?type=ws") }.isFailure)
+        assertEquals("192.168.1.10", Links.parse("vless://$uuid@192.168.1.10:80?type=ws").address)
     }
     @Test fun rejectsInvalid() {
         listOf("vless://@h:1", "vless://$uuid@h.example:443?security=reality", "vmess://notbase64!!", "ss://bad", "foo://x", "trojan://@h.example:1")
