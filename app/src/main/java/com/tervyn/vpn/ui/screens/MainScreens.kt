@@ -418,7 +418,21 @@ fun SitesScreen(vm: MainViewModel, go: (String) -> Unit) {
             }
             if (presetIds.isNotEmpty()) Text("Presets on: " + Domains.presets.filter { it.id in presetIds }.joinToString { it.label }, color = c.text2, fontSize = 13.sp, modifier = Modifier.padding(vertical = 4.dp))
             Spacer(Modifier.height(Space.s))
-            GlowOutlineButton("Add Website", { adding = true }, Modifier.fillMaxWidth(), Icons.Rounded.Add)
+            if (adding) {
+                var input by remember { mutableStateOf("") }
+                var err by remember { mutableStateOf<String?>(null) }
+                GlassCard(highlight = true) {
+                    ProxyInputField(input, { input = it; err = null }, "Website (e.g. example.com or a link)", keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, error = err)
+                    Spacer(Modifier.height(Space.s))
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                        NeonButton("Cancel", { adding = false }, Modifier.weight(1f), secondary = true)
+                        NeonButton("Add", {
+                            val d = vm.addDomain(input)
+                            if (d == null) err = "Not a valid website" else { adding = false; vm.toast("$d added (subdomains included)") }
+                        }, Modifier.weight(1f), enabled = input.isNotBlank())
+                    }
+                }
+            } else GlowOutlineButton("Add Website", { adding = true }, Modifier.fillMaxWidth(), Icons.Rounded.Add)
             Spacer(Modifier.height(Space.m))
             val active = s.mode == VpnMode.ONLY_MY_SITES && status.isConnected
             Row(
@@ -443,15 +457,6 @@ fun SitesScreen(vm: MainViewModel, go: (String) -> Unit) {
                 color = c.text3, fontSize = 12.sp)
             Spacer(Modifier.height(Space.xl))
         }
-    }
-    if (adding) {
-        var input by remember { mutableStateOf("") }
-        var err by remember { mutableStateOf<String?>(null) }
-        AlertDialog(onDismissRequest = { adding = false }, containerColor = c.card,
-            title = { Text("Add Website", color = c.text) },
-            text = { ProxyInputField(input, { input = it; err = null }, "Website (e.g. example.com or a link)", keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, error = err) },
-            confirmButton = { TextButton({ val d = vm.addDomain(input); if (d == null) err = "Not a valid website" else { adding = false; vm.toast("$d added (subdomains included)") } }) { Text("Add", color = c.cyan) } },
-            dismissButton = { TextButton({ adding = false }) { Text("Cancel", color = c.text2) } })
     }
 }
 

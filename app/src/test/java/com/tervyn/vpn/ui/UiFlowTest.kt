@@ -84,7 +84,8 @@ class UiFlowTest {
         rule.onNodeWithText("Servers").performClick(); advance()
         waitText("Choose a country or use the fastest server")
         shot("04_servers")
-        rule.onNodeWithText("See All").performClick(); advance()
+        rule.onNodeWithText("Home").performClick(); advance()
+        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
         waitText("App Presets")
         shot("05_sites")
         rule.onNodeWithText("Settings").performClick(); advance()
@@ -99,9 +100,11 @@ class UiFlowTest {
 
     @Test fun addWebsiteAndSwitchMode() {
         onboard()
-        rule.onNodeWithText("See All").performClick(); advance()
+        rule.onNodeWithText("Home").performClick(); advance()
+        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
         waitText("Add Website")
-        rule.onNodeWithText("Add Website").performClick(); advance()
+        rule.onNodeWithText("Add Website").performScrollTo().performClick(); advance()
+        waitText("Website (e.g.")
         rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("https://www.Example.org/some/page?x=1")
         rule.onNodeWithText("Add").performClick(); advance()
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.domains.all() }.any { it.domain == "example.org" } }
@@ -116,9 +119,11 @@ class UiFlowTest {
 
     @Test fun invalidWebsiteIsRejected() {
         onboard()
-        rule.onNodeWithText("See All").performClick(); advance()
+        rule.onNodeWithText("Home").performClick(); advance()
+        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
         waitText("Add Website")
-        rule.onNodeWithText("Add Website").performClick(); advance()
+        rule.onNodeWithText("Add Website").performScrollTo().performClick(); advance()
+        waitText("Website (e.g.")
         rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("javascript:alert(1)")
         rule.onNodeWithText("Add").performClick(); advance()
         waitText("Not a valid website")
