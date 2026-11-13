@@ -29,11 +29,13 @@ data class ProxyEndpoint(
 
 /** Where a server came from. Used to filter the pool according to the user's Server Source. */
 @Serializable
-enum class ServerOrigin { FREE_PUBLIC, PROXIO, CUSTOM, INTEGRATION, LIST_FILE, SUBSCRIPTION }
+enum class ServerOrigin { FREE_PUBLIC, PROXIO, CUSTOM, INTEGRATION, LIST_FILE, SUBSCRIPTION, TERVYN_FAST, TERVYN_ALL }
 
 /** User-selectable server source (Settings -> Server Source). */
 @Serializable
 enum class SourceMode(val label: String, val origins: Set<ServerOrigin>) {
+    TERVYN_FAST("Tervyn Fastest servers", setOf(ServerOrigin.TERVYN_FAST)),
+    TERVYN_ALL("Tervyn All servers", setOf(ServerOrigin.TERVYN_FAST, ServerOrigin.TERVYN_ALL)),
     FREE("Free public servers", setOf(ServerOrigin.FREE_PUBLIC)),
     PROXIO("Proxio.io servers", setOf(ServerOrigin.PROXIO)),
     PROXIO_PLUS_FREE("Proxio.io + free servers", setOf(ServerOrigin.PROXIO, ServerOrigin.FREE_PUBLIC)),

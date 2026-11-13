@@ -330,6 +330,8 @@ class TervynVpnService : VpnService() {
         monitorJobs += scope.launch { statsLoop() }
         monitorJobs += scope.launch { healthLoop() }
         if (ServerOrigin.FREE_PUBLIC in settings.sourceMode.origins) monitorJobs += scope.launch { refreshLoop() }
+        val builtin = settings.sourceMode.origins.filter { it == ServerOrigin.TERVYN_FAST || it == ServerOrigin.TERVYN_ALL }
+        if (builtin.isNotEmpty()) monitorJobs += scope.launch { builtinRefreshLoop(builtin) }
     }
 
     private suspend fun statsLoop() {
@@ -422,6 +424,21 @@ class TervynVpnService : VpnService() {
                 // Test a limited batch of new candidates in the background with low concurrency.
                 val untested = c.serverManager.pool(settings).filter { it.lastChecked == 0L }.shuffled().take(150)
                 c.serverManager.testMany(untested, settings.copy(testConcurrency = 16), "Refreshing backups", overallTimeoutMs = 120_000)
+            }
+        }
+    }
+
+    /** Keeps the built-in Tervyn lists current (they advertise an hourly update interval) and re-tests new entries. */
+    private suspend fun builtinRefreshLoop(origins: List<ServerOrigin>) {
+        while (true) {
+            delay(15 * 60_000L)
+            for (o in origins) {
+                if (!c.serverManager.builtinStale(o)) continue
+                runCatching {
+                    c.serverManager.refreshBuiltin(o)
+                    val untested = c.serverManager.pool(settings).filter { it.origin == o && it.lastChecked == 0L }.sortedBy { it.addedAt }.take(100)
+                    c.serverManager.testMany(untested, settings.copy(testConcurrency = 24), "Checking new servers", overallTimeoutMs = 120_000)
+                }
             }
         }
     }

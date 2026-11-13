@@ -13,7 +13,7 @@ import java.util.Base64
 /** Protocols that are run through Xray-core. */
 @Serializable
 enum class XrayProtocol(val label: String) {
-    VLESS("VLESS"), VMESS("VMess"), TROJAN("Trojan"), SHADOWSOCKS("Shadowsocks"), SOCKS("SOCKS5"), HTTP("HTTP")
+    VLESS("VLESS"), VMESS("VMess"), TROJAN("Trojan"), SHADOWSOCKS("Shadowsocks"), SOCKS("SOCKS5"), HTTP("HTTP"), HYSTERIA2("Hysteria2")
 }
 
 /**
@@ -56,12 +56,16 @@ data class XrayOutbound(
     /** Certificate pinning: SHA-256 of the peer certificate (hex, comma separated). */
     val pinnedPeerCertSha256: String = "",
     val verifyPeerCertByName: String = "",
+    /** Hysteria2 obfuscation ("salamander") and its password. */
+    val obfs: String = "",
+    val obfsPassword: String = "",
     /** The link asked for insecure TLS; it is ignored (Xray removed allowInsecure) and surfaced as a warning. */
     val insecureRequested: Boolean = false,
 ) {
     val displayProtocol: String
         get() = buildString {
             append(protocol.label)
+            if (protocol == XrayProtocol.HYSTERIA2) { if (obfs.isNotEmpty()) append(" · ${obfs.replaceFirstChar { it.uppercase() }}"); return@buildString }
             if (security == "reality") append(" · REALITY")
             else if (security == "tls") append(" · TLS")
             if (flow.contains("vision")) append(" · Vision")
@@ -80,11 +84,12 @@ object Links {
 
     fun isShareLink(s: String): Boolean {
         val scheme = s.trim().substringBefore("://", "").lowercase()
-        return scheme in listOf("vless", "vmess", "trojan", "ss")
+        return scheme in listOf("vless", "vmess", "trojan", "ss", "hysteria2", "hy2")
     }
 
     fun parse(link: String): XrayOutbound {
-        val s = link.trim()
+        // Some subscription generators HTML-escape the query separator.
+        val s = link.trim().replace("&amp;", "&")
         val scheme = s.substringBefore("://", "").lowercase()
         return when (scheme) {
             "vless" -> parseVless(s)
@@ -93,11 +98,74 @@ object Links {
             "ss" -> parseShadowsocks(s)
             "socks", "socks5", "socks5h" -> parseSocks(s)
             "http", "https" -> parseHttp(s)
+            "hysteria2", "hy2" -> parseHysteria2(s)
+            "tuic" -> throw LinkParseException("TUIC is not supported by Xray-core")
+            "ssr" -> throw LinkParseException("ShadowsocksR is not supported by Xray-core")
+            "hysteria" -> throw LinkParseException("Hysteria v1 is not supported by Xray-core (only Hysteria2)")
             else -> throw LinkParseException("Unsupported link type: ${scheme.ifEmpty { "unknown" }}")
         }
     }
 
     /** Parses many links (subscription bodies may be base64 encoded). Returns successes and the error count. */
+    /** Result of parsing a subscription: usable links, skipped counts by reason, and profile metadata. */
+    data class Subscription(
+        val links: List<Pair<String, XrayOutbound>>,
+        val skipped: Map<String, Int>,
+        val title: String?,
+        val updateIntervalHours: Int?,
+    ) {
+        val skippedTotal get() = skipped.values.sum()
+    }
+
+    fun parseSubscription(body: String): Subscription {
+        val decoded = decodeSubscription(body)
+        var title: String? = null
+        var interval: Int? = null
+        val ok = LinkedHashMap<String, Pair<String, XrayOutbound>>()
+        val skipped = LinkedHashMap<String, Int>()
+        decoded.lineSequence().map { it.trim() }.forEach { line ->
+            when {
+                line.startsWith("#profile-title:", true) -> title = line.substringAfter(':').trim().take(80)
+                line.startsWith("#profile-update-interval:", true) -> interval = line.substringAfter(':').trim().toIntOrNull()
+                line.contains("://") && !line.startsWith("#") -> try {
+                    val o = parse(line)
+                    ok.putIfAbsent(line.substringBefore('#').trim(), line to o)
+                } catch (e: Exception) {
+                    val reason = (e.message ?: "Invalid link").let { m ->
+                        when {
+                            m.contains("TUIC") -> "TUIC (unsupported)"
+                            m.contains("ShadowsocksR") -> "ShadowsocksR (unsupported)"
+                            m.contains("Hysteria v1") -> "Hysteria v1 (unsupported)"
+                            m.contains("no TLS/REALITY") && m.contains("VLESS") -> "Unencrypted VLESS (rejected by Xray)"
+                            m.contains("no TLS") && m.contains("Trojan") -> "Unencrypted Trojan (rejected by Xray)"
+                            m.contains("no encryption") -> "Unencrypted Shadowsocks (rejected by Xray)"
+                            m.contains("port hopping") -> "Port hopping (unsupported)"
+                            else -> "Invalid or unsupported"
+                        }
+                    }
+                    skipped[reason] = (skipped[reason] ?: 0) + 1
+                }
+            }
+        }
+        return Subscription(ok.values.toList(), skipped, title, interval)
+    }
+
+    /**
+     * Turns provider names such as "0002 | 🇳🇱 Netherlands | [38ms17.0mbps] | 🏴 Black | TG: @x" into
+     * "🇳🇱 Netherlands · 0002". Advertising and provider-measured speed claims are dropped.
+     */
+    fun cleanName(raw: String): String {
+        val parts = raw.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size < 2) return raw.trim().take(60)
+        val keep = parts.filterNot { p ->
+            p.contains("TG:", true) || p.contains('@') || p.startsWith("[") || p.contains("t.me", true) || p.contains("http", true) ||
+                p.startsWith("🏴") || p.equals("Black", true) || p.equals("White", true)
+        }
+        val id = keep.firstOrNull { it.all { ch -> ch.isDigit() } }
+        val rest = keep.filter { it != id }
+        return (rest.joinToString(" · ") + (id?.let { " · $it" } ?: "")).trim().ifEmpty { raw.trim() }.take(60)
+    }
+
     fun parseMany(body: String): Pair<List<Pair<String, XrayOutbound>>, Int> {
         val decoded = decodeSubscription(body)
         val ok = mutableListOf<Pair<String, XrayOutbound>>()
@@ -126,7 +194,7 @@ object Links {
         val fragment = if (noScheme.contains('#')) decode(noScheme.substringAfterLast('#')) else ""
         val withoutFrag = noScheme.substringBeforeLast('#')
         val queryStr = if (withoutFrag.contains('?')) withoutFrag.substringAfter('?') else ""
-        val authority = withoutFrag.substringBefore('?').substringBefore('/')
+        val authority = withoutFrag.substringBefore('?').substringBefore('/').replace("%20", "").trim()
         val at = authority.lastIndexOf('@')
         val userInfo = if (at >= 0) authority.substring(0, at) else ""
         val hp = ProxyList.splitHostPort(authority.substring(at + 1))
@@ -158,7 +226,7 @@ object Links {
         val id = decode(p.userInfo)
         if (!isUuidLike(id)) throw LinkParseException("Invalid VLESS id")
         val q = p.query
-        val security = (q["security"] ?: "none").lowercase()
+        val security = (q["security"] ?: "none").lowercase().let { if (it.isEmpty() || it == "false" || it == "0") "none" else it }
         if (security !in listOf("none", "tls", "reality")) throw LinkParseException("Unsupported security: $security")
         if (security == "reality" && q["pbk"].isNullOrEmpty()) throw LinkParseException("REALITY link is missing pbk (public key)")
         val encryption = q["encryption"]?.ifEmpty { null } ?: "none"
@@ -185,6 +253,9 @@ object Links {
         if (pass.isEmpty()) throw LinkParseException("Trojan link has no password")
         val q = p.query
         val security = (q["security"] ?: "tls").lowercase()
+        if (security == "none" && !isPrivateAddress(p.host)) {
+            throw LinkParseException("This Trojan server uses no TLS, so traffic would be unencrypted. Xray-core rejects it.")
+        }
         return XrayOutbound(
             protocol = XrayProtocol.TROJAN, address = p.host, port = p.port, name = p.fragment, password = pass,
             flow = q["flow"] ?: "",
@@ -221,6 +292,27 @@ object Links {
         )
     }
 
+    private fun parseHysteria2(link: String): XrayOutbound {
+        val noScheme = link.substringAfter("://")
+        val authority = noScheme.substringBefore('#').substringBefore('?').substringBefore('/')
+        val hostPort = authority.substringAfterLast('@')
+        val portStr = hostPort.substringAfterLast(':', "")
+        if (portStr.contains(',') || portStr.contains('-')) throw LinkParseException("Hysteria2 port hopping is not supported")
+        val p = split(link)
+        val q = p.query
+        val auth = decode(p.userInfo)
+        if (auth.isEmpty()) throw LinkParseException("Hysteria2 link has no password")
+        val obfs = q["obfs"]?.lowercase() ?: ""
+        if (obfs.isNotEmpty() && obfs != "salamander") throw LinkParseException("Unsupported Hysteria2 obfuscation: $obfs")
+        if (obfs == "salamander" && q["obfs-password"].isNullOrEmpty()) throw LinkParseException("Salamander obfuscation needs obfs-password")
+        return XrayOutbound(
+            protocol = XrayProtocol.HYSTERIA2, address = p.host, port = p.port, name = p.fragment, password = auth,
+            security = "tls", sni = q["sni"] ?: q["peer"] ?: "", alpn = q.alpn(),
+            obfs = obfs, obfsPassword = q["obfs-password"] ?: "",
+            insecureRequested = insecure(q),
+        )
+    }
+
     private val ssCiphers = setOf(
         "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305", "chacha20-ietf-poly1305", "xchacha20-poly1305",
         "xchacha20-ietf-poly1305", "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm",
@@ -238,7 +330,7 @@ object Links {
         val at = main.lastIndexOf('@')
         if (at < 0) throw LinkParseException("Invalid Shadowsocks link")
         var userInfo = main.substring(0, at)
-        val hp = ProxyList.splitHostPort(main.substring(at + 1).trimEnd('/')) ?: throw LinkParseException("Missing host or port")
+        val hp = ProxyList.splitHostPort(main.substring(at + 1).replace("%20", "").trim().trimEnd('/')) ?: throw LinkParseException("Missing host or port")
         if (!userInfo.contains(':') || !ssCiphers.contains(decode(userInfo).substringBefore(':').lowercase())) {
             userInfo = b64DecodeOrNull(decode(userInfo)) ?: decode(userInfo)
         } else {
@@ -247,6 +339,9 @@ object Links {
         val method = userInfo.substringBefore(':').lowercase()
         val password = userInfo.substringAfter(':', "")
         if (method !in ssCiphers) throw LinkParseException("Unsupported Shadowsocks cipher: $method")
+        if ((method == "none" || method == "plain") && !isPrivateAddress(hp.first)) {
+            throw LinkParseException("This Shadowsocks server uses no encryption (no TLS/REALITY equivalent). Xray-core rejects it.")
+        }
         if (method.startsWith("2022-")) {
             val need = if (method.contains("128")) 16 else 32
             val keys = password.split(':')
@@ -308,6 +403,8 @@ object Links {
                 val ui = Base64.getUrlEncoder().withoutPadding().encodeToString("${o.method}:${o.password}".toByteArray())
                 "ss://$ui@$host:${o.port}$frag"
             }
+            XrayProtocol.HYSTERIA2 -> "hysteria2://${enc(o.password)}@$host:${o.port}?" +
+                q("sni" to o.sni, "alpn" to o.alpn.joinToString(","), "obfs" to o.obfs, "obfs-password" to o.obfsPassword) + frag
             XrayProtocol.SOCKS -> "socks://" + (if (o.username.isNotEmpty()) Base64.getUrlEncoder().withoutPadding().encodeToString("${o.username}:${o.password}".toByteArray()) + "@" else "") + "$host:${o.port}$frag"
             XrayProtocol.HTTP -> (if (o.security == "tls") "https" else "http") + "://" + (if (o.username.isNotEmpty()) "${enc(o.username)}:${enc(o.password)}@" else "") + "$host:${o.port}$frag"
         }

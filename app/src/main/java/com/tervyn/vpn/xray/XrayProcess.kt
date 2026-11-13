@@ -24,10 +24,12 @@ import kotlin.concurrent.thread
  * The binary is packaged as `libxray.so` so Android extracts it to the (executable) native library dir.
  */
 class XrayProcess private constructor(
-    val endpoint: ProxyEndpoint,
+    /** One password-protected 127.0.0.1 SOCKS5 endpoint per configured server, in input order. */
+    val endpoints: List<ProxyEndpoint>,
     private val process: Process,
     private val log: ArrayDeque<String>,
 ) {
+    val endpoint: ProxyEndpoint get() = endpoints.first()
     val isAlive get() = process.isAlive
     fun recentLog(): List<String> = synchronized(log) { log.toList() }
 
@@ -44,15 +46,26 @@ class XrayProcess private constructor(
             return (1..n).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
         }
 
-        private fun freePort(): Int = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+        private fun freePorts(n: Int): List<Int> {
+            // Hold all sockets open while picking so the ports are distinct.
+            val sockets = (1..n).map { ServerSocket(0, 1, InetAddress.getLoopbackAddress()) }
+            return sockets.map { it.localPort }.also { sockets.forEach { s -> s.close() } }
+        }
+
+        private fun newLocal(port: Int) = XrayConfig.LocalSocks(port, "t" + token(8), token(24))
 
         suspend fun start(binary: File, workDir: File, outbound: XrayOutbound, readyTimeoutMs: Long = 8_000): XrayProcess =
+            startMulti(binary, workDir, listOf(outbound), readyTimeoutMs)
+
+        /** Starts one Xray process exposing a separate authenticated local SOCKS5 endpoint for each outbound. */
+        suspend fun startMulti(binary: File, workDir: File, outbounds: List<XrayOutbound>, readyTimeoutMs: Long = 10_000): XrayProcess =
             withContext(Dispatchers.IO) {
+                require(outbounds.isNotEmpty())
                 if (!binary.canExecute()) throw IOException("Xray binary is missing for this device ABI")
                 workDir.mkdirs()
-                val local = XrayConfig.LocalSocks(freePort(), "t" + token(8), token(24))
-                val cfg = File(workDir, "xray-${local.port}.json")
-                cfg.writeText(XrayConfig.build(outbound, local))
+                val locals = freePorts(outbounds.size).map(::newLocal)
+                val cfg = File(workDir, "xray-${locals.first().port}.json")
+                cfg.writeText(if (outbounds.size == 1) XrayConfig.build(outbounds[0], locals[0]) else XrayConfig.buildMulti(outbounds.zip(locals)))
                 cfg.setReadable(false, false); cfg.setReadable(true, true)
                 val pb = ProcessBuilder(binary.absolutePath, "run", "-c", cfg.absolutePath)
                     .directory(workDir).redirectErrorStream(true)
@@ -66,10 +79,12 @@ class XrayProcess private constructor(
                         }
                     }
                 }
+                fun listening(port: Int) = runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 200) } }.isSuccess
                 val deadline = System.currentTimeMillis() + readyTimeoutMs
                 var ready = false
                 while (System.currentTimeMillis() < deadline && proc.isAlive) {
-                    ready = runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", local.port), 200) } }.isSuccess
+                    // Xray opens all inbounds during startup; first and last listening means it is up.
+                    ready = listening(locals.first().port) && listening(locals.last().port)
                     if (ready) break
                     delay(100)
                 }
@@ -79,7 +94,7 @@ class XrayProcess private constructor(
                     val tail = synchronized(log) { log.takeLast(3).joinToString(" | ") }
                     throw IOException("Xray failed to start" + if (tail.isNotEmpty()) ": $tail" else "")
                 }
-                XrayProcess(ProxyEndpoint(ProxyProtocol.SOCKS5, "127.0.0.1", local.port, local.user, local.pass), proc, log)
+                XrayProcess(locals.map { ProxyEndpoint(ProxyProtocol.SOCKS5, "127.0.0.1", it.port, it.user, it.pass) }, proc, log)
             }
 
         /** Runs `xray version` (used by diagnostics and About). */
@@ -117,6 +132,36 @@ class XrayManager(private val binary: File, private val workDir: File) {
     suspend fun <T> withTemporary(outbound: XrayOutbound, block: suspend (ProxyEndpoint) -> T): T = testSlots.withPermit {
         val p = XrayProcess.start(binary, workDir, outbound)
         try { block(p.endpoint) } finally { p.stop() }
+    }
+
+    private val batchSlots = Semaphore(1)
+
+    /**
+     * Starts the given servers in as few Xray processes as possible (chunks of [chunk]) and passes one endpoint per
+     * server to [block] (null for a server Xray refused to start). If a chunk fails to start because of one bad
+     * config, the chunk is split in half recursively so the remaining servers still get tested.
+     */
+    suspend fun <T> withBatch(outbounds: List<XrayOutbound>, chunk: Int = 120, block: suspend (List<ProxyEndpoint?>) -> T): T = batchSlots.withPermit {
+        val procs = mutableListOf<XrayProcess>()
+        val eps = arrayOfNulls<ProxyEndpoint>(outbounds.size)
+        suspend fun startRange(idx: List<Int>) {
+            if (idx.isEmpty()) return
+            try {
+                val p = XrayProcess.startMulti(binary, workDir, idx.map { outbounds[it] })
+                procs += p
+                idx.forEachIndexed { k, i -> eps[i] = p.endpoints[k] }
+            } catch (e: IOException) {
+                if (idx.size == 1) return
+                startRange(idx.subList(0, idx.size / 2))
+                startRange(idx.subList(idx.size / 2, idx.size))
+            }
+        }
+        try {
+            outbounds.indices.toList().chunked(chunk).forEach { startRange(it) }
+            block(eps.toList())
+        } finally {
+            procs.forEach { it.stop() }
+        }
     }
 
     fun version(): String? = if (available) XrayProcess.version(binary) else null

@@ -60,6 +60,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val speedTests = c.history.speedTests().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val events = c.history.events().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val progress = c.serverManager.progress
+    val builtinStatus = c.serverManager.builtinStatus
     val pinHash = c.settings.pinHash.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -103,9 +104,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val s = c.settings.current()
             try {
                 if (ServerOrigin.FREE_PUBLIC in s.sourceMode.origins) c.serverManager.refreshFreeLists(s)
+                for (o in listOf(ServerOrigin.TERVYN_FAST, ServerOrigin.TERVYN_ALL).filter { it in s.sourceMode.origins }) {
+                    val st = c.serverManager.refreshBuiltin(o)
+                    if (st.error != null) toast("Server list: ${st.error}")
+                }
                 if (ServerOrigin.PROXIO in s.sourceMode.origins && c.secureStore.proxioKey() != null) runCatching { c.serverManager.refreshProxio(s) }
                 val pool = c.serverManager.pool(s)
-                val toTest = (pool.filter { it.alive } + pool.filter { !it.alive && it.failCount < 3 }.shuffled()).take(400)
+                val builtin = s.sourceMode.origins.any { it == ServerOrigin.TERVYN_FAST || it == ServerOrigin.TERVYN_ALL }
+                val toTest = if (builtin) pool.sortedWith(compareBy<Server>({ if (it.origin == ServerOrigin.TERVYN_FAST) 0 else 1 }, { it.addedAt })).take(300)
+                    else (pool.filter { it.alive } + pool.filter { !it.alive && it.failCount < 3 }.shuffled()).take(400)
                 val res = c.serverManager.testMany(toTest, s, "Testing servers", overallTimeoutMs = 180_000)
                 toast("${res.count { it.second.ok }} working of ${res.size} tested")
             } catch (e: Exception) {

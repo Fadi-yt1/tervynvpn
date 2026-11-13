@@ -67,4 +67,44 @@ class LinksTest {
         val link = "vless://$uuid@203.0.113.5:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=a.example&fp=chrome&pbk=KEY&sid=ab&type=tcp#N"
         val o = Links.parse(link); assertEquals(o, Links.parse(Links.toLink(o)))
     }
+
+    @Test fun hysteria2WithSalamander() {
+        val o = Links.parse("hysteria2://p%40ss@203.0.113.9:443?sni=hy.example.com&obfs=salamander&obfs-password=ob1&alpn=h3#0002 | 🇳🇱 Netherlands | [38ms17.0mbps] | 🏴 Black | TG: @chan")
+        assertEquals(XrayProtocol.HYSTERIA2, o.protocol); assertEquals("p@ss", o.password); assertEquals("salamander", o.obfs); assertEquals("ob1", o.obfsPassword)
+        assertEquals("hy.example.com", o.sni); assertEquals("Hysteria2 · Salamander", o.displayProtocol)
+        assertEquals(o.copy(name = ""), Links.parse(Links.toLink(o)).copy(name = ""))
+        assertTrue(runCatching { Links.parse("hy2://pw@h.example.com:20000-30000?sni=a") }.isFailure) // port hopping
+        assertTrue(Links.parse("hy2://pw@h.example.com:443?insecure=1").insecureRequested)
+    }
+    @Test fun htmlEscapedQueryAndAliases() {
+        val o = Links.parse("vless://$uuid@h.example.com:443?security=reality&amp;pbk=KEY&amp;sni=a.example&amp;type=tcp")
+        assertEquals("reality", o.security); assertEquals("KEY", o.publicKey)
+        assertTrue(runCatching { Links.parse("vless://$uuid@h.example.com:80?security=false&type=tcp") }.isFailure) // "false" means none -> plaintext
+        val ui = Base64.getUrlEncoder().withoutPadding().encodeToString("aes-256-gcm:pw".toByteArray())
+        assertEquals(19999, Links.parse("ss://$ui@198.51.100.4:19999%20#x").port)
+    }
+    @Test fun plaintextTrojanAndShadowsocksRejected() {
+        assertTrue(runCatching { Links.parse("trojan://pw@h.example.com:80?security=none") }.isFailure)
+        val none = Base64.getUrlEncoder().withoutPadding().encodeToString("none:pw".toByteArray())
+        assertTrue(runCatching { Links.parse("ss://$none@198.51.100.4:8388") }.isFailure)
+    }
+    @Test fun unsupportedProtocolsExplained() {
+        assertTrue(runCatching { Links.parse("tuic://u:p@h.example.com:443") }.exceptionOrNull()!!.message!!.contains("TUIC"))
+        assertTrue(runCatching { Links.parse("hysteria://h.example.com:443?auth=x") }.exceptionOrNull()!!.message!!.contains("Hysteria v1"))
+    }
+    @Test fun subscriptionMetadataAndSkips() {
+        val body = """
+            #profile-title: FASTEST 100
+            #profile-update-interval: 1
+            vless://$uuid@a.example.com:443?security=reality&pbk=K&sni=s.example&type=tcp#0001 | 🇩🇪 Germany | [10ms1mbps] | TG: @x
+            vless://$uuid@a.example.com:443?security=reality&pbk=K&sni=s.example&type=tcp#duplicate
+            vless://$uuid@b.example.com:80?security=none&type=tcp#plain
+            tuic://u:p@c.example.com:443#t
+        """.trimIndent()
+        val sub = Links.parseSubscription(body)
+        assertEquals("FASTEST 100", sub.title); assertEquals(1, sub.updateIntervalHours)
+        assertEquals(1, sub.links.size)
+        assertEquals(mapOf("Unencrypted VLESS (rejected by Xray)" to 1, "TUIC (unsupported)" to 1), sub.skipped)
+        assertEquals("🇩🇪 Germany · 0001", Links.cleanName(sub.links[0].second.name))
+    }
 }

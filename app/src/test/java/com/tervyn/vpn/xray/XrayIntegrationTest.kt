@@ -97,4 +97,19 @@ class XrayIntegrationTest {
         Thread.sleep(300)
         assertTrue(runCatching { java.net.Socket("127.0.0.1", ep!!.port).close() }.isFailure)
     }
+
+    /** Batch mode: many servers in one Xray process; a config Xray refuses is isolated by bisection. */
+    @Test fun batchWithBisection() = runBlocking {
+        val port = startServer("""{"listen":"127.0.0.1","port":PORT,"protocol":"vless","settings":{"clients":[{"id":"$uuid"}],"decryption":"none"}}""")
+        val good = XrayOutbound(XrayProtocol.VLESS, "127.0.0.1", port, id = uuid)
+        // Bypasses the link parser on purpose: a 32-byte key for a 16-byte SS-2022 cipher makes Xray refuse to start.
+        val bad = XrayOutbound(XrayProtocol.SHADOWSOCKS, "127.0.0.1", 1, method = "2022-blake3-aes-128-gcm", password = "YctPZ6U7xPPcU+gp3u+0tx/tRizJN9K8y+uKlW2qjlI=")
+        val list = listOf(good, good.copy(), bad, good.copy(), good.copy())
+        XrayManager(bin, work).withBatch(list) { eps ->
+            assertEquals(5, eps.size)
+            assertEquals(null, eps[2])
+            listOf(0, 1, 3, 4).forEach { i -> roundTrip(eps[i]!!) }
+            assertEquals(4, eps.filterNotNull().map { it.port }.toSet().size)
+        }
+    }
 }

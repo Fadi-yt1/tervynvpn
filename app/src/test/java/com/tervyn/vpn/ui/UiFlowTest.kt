@@ -94,7 +94,7 @@ class UiFlowTest {
         rule.onNodeWithText("Servers").performClick(); advance()
         waitText("Source")
         rule.onNodeWithText("Source").performClick(); advance()
-        waitText("Configure")
+        waitText("Tervyn server lists")
         shot("07_sources")
     }
 

@@ -29,6 +29,8 @@ class XrayConfigTest {
         "ss://2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw%3D%3D@ss.example.com:443",
         "socks://" + Base64.getUrlEncoder().withoutPadding().encodeToString("u:p".toByteArray()) + "@s.example.com:1080",
         "http://u:p@h.example.com:8080",
+        "hysteria2://pass@hy.example.com:443?sni=hy.example.com&obfs=salamander&obfs-password=obfspw",
+        "hy2://pass@hy.example.com:8443?sni=hy.example.com&alpn=h3",
     )
 
     @Test fun inboundIsLocalAndAuthenticated() {
@@ -64,5 +66,17 @@ class XrayConfigTest {
             assertEquals("xray rejected config for $link:\n$out", 0, p.exitValue())
         }
         dir.deleteRecursively()
+    }
+
+    @Test fun multiServerConfigAcceptedByXrayCore() {
+        val bin = File(System.getProperty("xray.host.binary") ?: "../xray/host/xray")
+        assumeTrue(bin.canExecute())
+        val f = kotlin.io.path.createTempFile("multi", ".json").toFile()
+        f.writeText(XrayConfig.buildMulti(links.mapIndexed { i, l -> Links.parse(l) to XrayConfig.LocalSocks(30000 + i, "u$i", "p$i") }))
+        val p = ProcessBuilder(bin.absolutePath, "run", "-test", "-c", f.absolutePath).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        p.waitFor(30, TimeUnit.SECONDS)
+        f.delete()
+        assertEquals(out, 0, p.exitValue())
     }
 }

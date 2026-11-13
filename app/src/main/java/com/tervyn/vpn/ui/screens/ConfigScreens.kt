@@ -101,6 +101,8 @@ fun SourcesScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
     var limit by rememberSaveable { mutableStateOf(s.proxioLimit.toString()) }
     var snippet by rememberSaveable { mutableStateOf("") }
     val options = listOf(
+        Triple(SourceMode.TERVYN_FAST, Icons.Rounded.Bolt, "Top 100 · Reality/TLS"),
+        Triple(SourceMode.TERVYN_ALL, Icons.Rounded.Hub, "≈1,900 · all protocols"),
         Triple(SourceMode.FREE, Icons.Rounded.Public, "18 public lists"),
         Triple(SourceMode.PROXIO, Icons.Rounded.Key, "Your API key"),
         Triple(SourceMode.PROXIO_PLUS_FREE, Icons.Rounded.RocketLaunch, "Proxio first"),
@@ -117,6 +119,36 @@ fun SourcesScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
                         OptionCard(m.label.replace(" servers", "").replace(" (.txt file)", ""), sub, icon, s.sourceMode == m, { vm.setSourceMode(m) }, Modifier.weight(1f))
                     }
                 }
+            }
+        }
+        if (s.sourceMode == SourceMode.TERVYN_FAST || s.sourceMode == SourceMode.TERVYN_ALL) {
+            val statuses by vm.builtinStatus.collectAsState()
+            val progress by vm.progress.collectAsState()
+            Spacer(Modifier.height(Space.m))
+            GlassCard(highlight = true) {
+                CardTitle(Icons.Rounded.Bolt, "Tervyn server lists", "Updated automatically every hour while you are connected")
+                val origins = s.sourceMode.origins.toList().sortedBy { it.ordinal }
+                origins.forEach { o ->
+                    val st = statuses[o]
+                    val updated = vm.c.serverManager.builtinUpdatedAt(o)
+                    Text(if (o.name == "TERVYN_ALL") "All servers (podpiska.txt)" else "Fastest 100 (fastest.txt)", color = c.text, style = MaterialTheme.typography.titleSmall)
+                    Text(when {
+                        st?.error != null -> "Update failed: ${st.error}"
+                        st != null -> "${st.usable} usable servers · updated ${com.tervyn.vpn.utils.Format.ago(st.updatedAt)}"
+                        updated > 0 -> "Updated ${com.tervyn.vpn.utils.Format.ago(updated)}"
+                        else -> "Downloaded when you connect"
+                    }, color = if (st?.error != null) c.red else c.text2, style = MaterialTheme.typography.bodySmall)
+                    if (st != null && st.skipped.isNotEmpty()) {
+                        Text("Skipped ${st.skippedTotal}: " + st.skipped.entries.joinToString { "${it.value} ${it.key}" },
+                            color = c.text3, style = MaterialTheme.typography.labelSmall)
+                    }
+                    Spacer(Modifier.height(Space.s))
+                }
+                NeonButton(if (progress.running) "${progress.phase}…" else "Update & test now", { vm.refreshServers(); go(Routes.SERVERS) },
+                    Modifier.fillMaxWidth(), icon = Icons.Rounded.Refresh, enabled = !progress.running)
+                Spacer(Modifier.height(Space.s))
+                Text("Some entries cannot work with Xray-core and are skipped: unencrypted VLESS/Trojan/Shadowsocks, TUIC, ShadowsocksR and Hysteria v1. Hysteria2 servers with self-signed certificates fail the HTTPS check because certificates are always verified.",
+                    color = c.text3, style = MaterialTheme.typography.labelSmall)
             }
         }
         if (s.sourceMode == SourceMode.PROXIO || s.sourceMode == SourceMode.PROXIO_PLUS_FREE) {

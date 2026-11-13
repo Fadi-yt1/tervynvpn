@@ -76,10 +76,22 @@ class ServerRepository(private val dao: ServerDao, private val cipher: SecretCip
         protocolLabel = if (ep.protocol == ProxyProtocol.SOCKS5) "SOCKS5" else "HTTP", endpoint = ep, origin = origin,
     )
 
-    fun linkServer(link: String, o: XrayOutbound, origin: ServerOrigin, subscriptionId: Long? = null) = Server(
-        id = idForLink(link), name = o.name.ifBlank { "${o.protocol.label} ${o.address}" }, protocolLabel = o.displayProtocol,
-        xrayLink = link, origin = origin, subscriptionId = subscriptionId,
+    fun linkServer(link: String, o: XrayOutbound, origin: ServerOrigin, subscriptionId: Long? = null, addedAt: Long = System.currentTimeMillis()) = Server(
+        id = idForLink(link), name = com.tervyn.vpn.core.Links.cleanName(o.name).ifBlank { "${o.protocol.label} ${o.address}" }, protocolLabel = o.displayProtocol,
+        xrayLink = link, origin = origin, subscriptionId = subscriptionId, addedAt = addedAt,
     )
+
+    /** Replaces the servers of [origin] with [fresh]; favourites and servers present in [fresh] keep their test history. */
+    suspend fun replaceOrigin(origin: ServerOrigin, fresh: List<Server>) {
+        val keep = fresh.map { it.id }.toSet()
+        dao.byOrigins(listOf(origin.name)).filter { it.id !in keep && !it.favorite }.forEach { dao.delete(it.id) }
+        // A server listed by a higher-priority built-in list keeps its origin.
+        val existing = dao.all().associateBy { it.id }
+        dao.upsert(fresh.map { srv ->
+            val old = existing[srv.id]
+            toEntity(srv, old).copy(addedAt = srv.addedAt, origin = if (old != null && old.origin == ServerOrigin.TERVYN_FAST.name && origin == ServerOrigin.TERVYN_ALL) old.origin else srv.origin.name)
+        })
+    }
 
     suspend fun recordTest(id: String, r: TestResult) =
         dao.updateTest(id, r.ok, if (r.ok) r.latencyMs else null, r.exitIp, r.countryCode, System.currentTimeMillis())

@@ -32,7 +32,7 @@ data class AppSettings(
     val selectedServerId: String? = null,
     val preferredCountry: String? = null,
     val mode: VpnMode = VpnMode.ALL_APPS,
-    val sourceMode: SourceMode = SourceMode.FREE,
+    val sourceMode: SourceMode = SourceMode.TERVYN_FAST,
     val autoConnectOnBoot: Boolean = false,
     val autoConnectOnLaunch: Boolean = false,
     val reconnectOnNetworkChange: Boolean = true,
