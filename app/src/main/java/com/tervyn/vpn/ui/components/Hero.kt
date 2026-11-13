@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -147,13 +148,14 @@ fun GlowShield(icon: ImageVector?, size: Dp = 140.dp, accent: Color = Tervyn.col
 
 /** Hero header: shield art on the left, two-tone title and description on the right. */
 @Composable
-fun HeroHeader(title: String, accentWord: String?, subtitle: String?, icon: ImageVector, accent: Color = Tervyn.colors.cyan) {
+fun HeroHeader(title: String, accentWord: String?, subtitle: String?, icon: ImageVector, accent: Color = Tervyn.colors.cyan, art: Int? = null) {
     val c = Tervyn.colors
-    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.s), verticalAlignment = Alignment.CenterVertically) {
-        GlowShield(icon, 132.dp, accent)
-        Spacer(Modifier.width(Space.m))
+    Row(Modifier.fillMaxWidth().padding(end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
+        if (art != null) Art(art, Modifier.weight(0.92f).aspectRatio(1.2f), androidx.compose.ui.layout.ContentScale.Crop)
+        else GlowShield(icon, 150.dp, accent, Modifier.padding(start = Space.gutter))
+        Spacer(Modifier.width(Space.s))
         Column(Modifier.weight(1f)) {
-            Text(twoTone(title, accentWord, c.text, c.cyan), style = MaterialTheme.typography.headlineSmall.copy(fontSize = 26.sp, lineHeight = 30.sp), fontWeight = FontWeight.Bold)
+            Text(twoTone(title, accentWord, c.text, c.cyan), fontSize = 30.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold)
             if (subtitle != null) {
                 Spacer(Modifier.height(6.dp))
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = c.text2)

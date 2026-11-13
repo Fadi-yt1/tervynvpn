@@ -117,7 +117,7 @@ fun FreeSourcesScreen(vm: MainViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
     var custom by remember { mutableStateOf("") }
-    ScreenScaffold("Free public servers", "Proxy lists Tervyn downloads and tests", onBack, heroIcon = Icons.Rounded.Public, accentWord = "servers") {
+    ScreenScaffold("Free public servers", "Proxy lists Tervyn downloads and tests", onBack, heroArt = com.tervyn.vpn.R.drawable.art_dns, accentWord = "servers") {
         NotificationCard("Unknown operators", "These are open proxies run by unknown people. Every server is tested over HTTPS with certificate validation, but do not use them for banking or sensitive logins.", Tone.WARNING)
         Spacer(Modifier.height(Space.m))
         GlassCard {
@@ -157,7 +157,7 @@ fun ProxioScreen(vm: MainViewModel, onBack: () -> Unit) {
     var proto by rememberSaveable { mutableStateOf(s.proxioProtocol) }
     var limit by rememberSaveable { mutableStateOf(s.proxioLimit.toString()) }
     val hasKey = vm.proxioKeySet()
-    ScreenScaffold("Proxio.io", "Private proxies from your Proxio account", onBack, heroIcon = Icons.Rounded.Key, accentWord = "Proxio") {
+    ScreenScaffold("Proxio.io", "Private proxies from your Proxio account", onBack, heroArt = com.tervyn.vpn.R.drawable.art_privacy, accentWord = "Proxio") {
         GlassCard {
             ProxyInputField(key, { key = it.trim() }, if (hasKey) "API key (saved — enter to replace)" else "API key", secret = true)
             Text("Stored encrypted with the Android Keystore; never logged.", color = c.text3, style = MaterialTheme.typography.labelSmall)
@@ -215,7 +215,7 @@ fun AdvancedConfigScreen(vm: MainViewModel, onBack: () -> Unit) {
     var hostH by rememberSaveable { mutableStateOf("") }
     var path by rememberSaveable { mutableStateOf("") }
     var pin by rememberSaveable { mutableStateOf("") }
-    ScreenScaffold("Advanced Configuration", "Manual Xray outbound", onBack, heroIcon = Icons.Rounded.Tune, accentWord = "Configuration") {
+    ScreenScaffold("Advanced Configuration", "Manual Xray outbound", onBack, heroArt = com.tervyn.vpn.R.drawable.art_protocol, accentWord = "Configuration") {
         GlassCard {
             Text("Protocol", color = c.text, style = MaterialTheme.typography.titleSmall)
             ChipRow(XrayProtocol.entries.filter { it != XrayProtocol.HTTP && it != XrayProtocol.SOCKS }.map { it.name to it.label }, proto.name) { proto = XrayProtocol.valueOf(it) }
@@ -310,7 +310,7 @@ fun SubscriptionsScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> U
     val action = remember { AsyncAction() }
     var name by rememberSaveable { mutableStateOf("") }
     var url by rememberSaveable { mutableStateOf("") }
-    ScreenScaffold("Subscriptions & Servers", "Server lists from your provider", onBack, heroIcon = Icons.Rounded.Cloud, accentWord = "Servers") {
+    ScreenScaffold("Subscriptions & Servers", "Server lists from your provider", onBack, heroArt = com.tervyn.vpn.R.drawable.art_import, accentWord = "Servers") {
         GlassCard {
             ProxyInputField(name, { name = it.take(40) }, "Name (optional)")
             ProxyInputField(url, { url = it.trim() }, "Subscription URL (https://…)", keyboardType = KeyboardType.Uri)
@@ -370,7 +370,7 @@ fun ListImportScreen(vm: MainViewModel, onBack: () -> Unit) {
         if (uri != null) scope.launch { runCatching { vm.readText(uri) }.onSuccess { text = it }.onFailure { vm.toast(it.message ?: "Cannot read file") } }
     }
     val preview = remember(text, proto) { if (text.isBlank()) null else ProxyList.parse(text, proto) }
-    ScreenScaffold("Proxy List Import", "Import a .txt file or paste a list", onBack, heroIcon = Icons.Rounded.Description, accentWord = "Import") {
+    ScreenScaffold("Proxy List Import", "Import a .txt file or paste a list", onBack, heroArt = com.tervyn.vpn.R.drawable.art_import, accentWord = "Import") {
         NeonButton("Choose .txt file", { picker.launch(arrayOf("text/plain", "text/*", "application/octet-stream")) }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Description, secondary = true)
         Spacer(Modifier.height(Space.s))
         ProxyInputField(text.take(20_000), { text = it }, "…or paste proxies here", singleLine = false, minLines = 5,
@@ -404,7 +404,7 @@ fun IntegrationScreen(vm: MainViewModel, onBack: () -> Unit) {
     val action = remember { AsyncAction() }
     var text by rememberSaveable { mutableStateOf("") }
     val preview = remember(text) { if (text.isBlank()) null else com.tervyn.vpn.core.ProxySnippet.parse(text) }
-    ScreenScaffold("Proxy Integration", "Paste the example from Webshare, Bright Data, Oxylabs, IPRoyal…", onBack, heroIcon = Icons.Rounded.Code, accentWord = "Integration") {
+    ScreenScaffold("Proxy Integration", "Paste the example from Webshare, Bright Data, Oxylabs, IPRoyal…", onBack, heroArt = com.tervyn.vpn.R.drawable.art_protocol, accentWord = "Integration") {
         ProxyInputField(text, { text = it.take(20_000) }, "cURL, Python or Node.js example", singleLine = false, minLines = 6,
             placeholder = "curl -x http://user:pass@host:port https://ipinfo.io")
         Spacer(Modifier.height(Space.s))

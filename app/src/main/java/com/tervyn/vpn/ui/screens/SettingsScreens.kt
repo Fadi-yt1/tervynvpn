@@ -117,149 +117,14 @@ private fun Confirm(title: String, text: String, onConfirm: () -> Unit, onDismis
         dismissButton = { TextButton(onDismiss) { Text("Cancel", color = c.text2) } })
 }
 
-@Composable
-fun SettingsScreen(vm: MainViewModel, go: (String) -> Unit, connect: () -> Unit) {
-    val c = Tervyn.colors
-    val ctx = LocalContext.current
-    val status by vm.status.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val s = settings ?: return
-    val scope = rememberCoroutineScope()
-    var confirm by remember { mutableStateOf<String?>(null) }
-    var exportWithServers by rememberSaveable { mutableStateOf(false) }
-    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch { vm.exportConfig(uri, exportWithServers) }
-    }
-    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) scope.launch { vm.importConfig(uri) } }
 
-    ScreenScaffold("Settings", "Customize your VPN experience", onBack = null) {
-        GlassCard(highlight = true, onClick = { if (status.isConnected) go(Routes.CONNECTED) else if (!status.isActive) connect() }) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Shield, null, tint = phaseColor(status.phase), modifier = Modifier.size(48.dp))
-                Spacer(Modifier.width(Space.m))
-                Column(Modifier.weight(1f)) {
-                    Text("VPN Status", color = c.text, style = MaterialTheme.typography.titleMedium)
-                    Text(status.phase.label, color = phaseColor(status.phase), style = MaterialTheme.typography.titleSmall)
-                    if (status.isConnected) Text("IP: ${status.exitIp ?: "—"} • ${Format.countryName(status.countryCode)}", color = c.text2, style = MaterialTheme.typography.bodySmall)
-                    else if (!status.isActive) Text("Tap to connect", color = c.text2, style = MaterialTheme.typography.bodySmall)
-                }
-                if (status.isConnected) CountryFlag(status.countryCode, 32.dp)
-            }
-        }
-        SectionHeader("VPN Preferences", Icons.Rounded.Bolt)
-        GlassCard {
-            ToggleSetting(Icons.Rounded.Bolt, "Auto-Switch to Fastest Server", "Switch when a faster server is available", s.autoSwitch, { vm.setAutoSwitch(it) }, tint = c.amber)
-            SettingsRow(Icons.Rounded.Language, "Choose Country", s.preferredCountry?.let { Format.countryName(it) } ?: "Fastest Available", { go(Routes.COUNTRIES) }, valueColor = c.cyan)
-            SettingsRow(Icons.Rounded.Apps, "VPN Mode", s.mode.label, { go(Routes.SITES) }, valueColor = c.cyan)
-            SettingsRow(Icons.Rounded.Speed, "Auto-Switch Configuration", "Threshold ${s.switchThresholdPct}% · checks every ${s.healthCheckSec}s", { go(Routes.AUTO_SWITCH) })
-            SettingsRow(Icons.Rounded.CallSplit, "App Exclusions", "${s.excludedApps.size} apps bypass the VPN", { go(Routes.SPLIT) })
-            SettingsRow(Icons.Rounded.Dns, "DNS Settings", DohForwarder.PRESETS.entries.firstOrNull { it.value == s.dohUrl }?.key ?: s.dohUrl, { go(Routes.DNS) })
-        }
-        SectionHeader("Connection", Icons.Rounded.PowerSettingsNew)
-        GlassCard {
-            ToggleSetting(Icons.Rounded.PowerSettingsNew, "Connect when Tervyn opens", null, s.autoConnectOnLaunch, { v -> vm.updateSettings { it.copy(autoConnectOnLaunch = v) } })
-            ToggleSetting(Icons.Rounded.RestartAlt, "Connect after reboot", "Requires the VPN permission to be granted", s.autoConnectOnBoot, { v -> vm.updateSettings { it.copy(autoConnectOnBoot = v) } })
-            ToggleSetting(Icons.Rounded.WifiTethering, "Reconnect on network change", "Wi-Fi ↔ mobile data", s.reconnectOnNetworkChange, { v -> vm.updateSettings { it.copy(reconnectOnNetworkChange = v) } })
-            SettingsRow(Icons.Rounded.AllInclusive, "Always-on VPN", "Set in Android VPN settings (gear next to Tervyn)", { openVpnSettings(ctx) })
-            SettingsRow(Icons.Rounded.Block, "Block connections without VPN", "Kill switch — enable in Android VPN settings", { openVpnSettings(ctx) })
-        }
-        SectionHeader("Server Source", Icons.Rounded.Storage)
-        GlassCard { SettingsRow(Icons.Rounded.Storage, "Server Source", s.sourceMode.label, { go(Routes.SOURCES) }, valueColor = c.cyan) }
-        SectionHeader("Privacy & Security", Icons.Rounded.Security)
-        GlassCard {
-            SettingsRow(Icons.Rounded.VerifiedUser, "Check My IP", "View your current IP and country", { go(Routes.IP) })
-            SettingsRow(Icons.Rounded.Policy, "Privacy & Security Center", null, { go(Routes.PRIVACY) })
-            SettingsRow(Icons.Rounded.Lock, "App Lock & Biometrics", if (s.appLock) "On" else "Off", { go(Routes.APP_LOCK) })
-            SettingsRow(Icons.Rounded.Shield, "App Permissions", null, { go(Routes.PERMISSIONS) })
-        }
-        SectionHeader("Monitoring", Icons.Rounded.Dashboard)
-        GlassCard {
-            SettingsRow(Icons.Rounded.Speed, "Speed Test", null, { go(Routes.SPEED) })
-            SettingsRow(Icons.Rounded.Dashboard, "Connection Statistics", null, { go(Routes.STATS) })
-            SettingsRow(Icons.Rounded.History, "Connection History & Analytics", null, { go(Routes.HISTORY) })
-            SettingsRow(Icons.Rounded.BugReport, "Network Diagnostics", null, { go(Routes.DIAGNOSTICS) })
-            SettingsRow(Icons.Rounded.NotificationsActive, "VPN Connection Notifications", null, { go(Routes.NOTIFICATIONS) })
-            SettingsRow(Icons.Rounded.Widgets, "Quick Settings & Notifications", null, { go(Routes.QUICK) })
-        }
-        SectionHeader("Appearance & Data", Icons.Rounded.Palette)
-        GlassCard {
-            SettingsRow(Icons.Rounded.Palette, "Theme", s.theme.label, { go(Routes.THEME) })
-            ToggleSetting(Icons.Rounded.Storage, "Include servers in export", "Exports credentials — keep the file private", exportWithServers, { exportWithServers = it })
-            SettingsRow(Icons.Rounded.Upload, "Export configuration", null, { exporter.launch("tervyn-config.json") })
-            SettingsRow(Icons.Rounded.Download, "Import configuration", null, { importer.launch(arrayOf("application/json", "text/*", "application/octet-stream")) })
-            SettingsRow(Icons.Rounded.CleaningServices, "Clear cache", "Free server cache and temp files", { confirm = "cache" })
-            SettingsRow(Icons.Rounded.DeleteSweep, "Clear history", null, { confirm = "history" })
-            SettingsRow(Icons.Rounded.RestartAlt, "Reset settings", null, { confirm = "reset" }, tint = c.red)
-        }
-        SectionHeader("About", Icons.Rounded.Info)
-        GlassCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TervynLogo(44.dp)
-                Spacer(Modifier.width(Space.m))
-                Column(Modifier.weight(1f)) {
-                    Text("Tervyn VPN", color = c.text, style = MaterialTheme.typography.titleSmall)
-                    Text("Version ${BuildConfig.VERSION_NAME}", color = c.text2, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            SettingsRow(Icons.AutoMirrored.Rounded.Help, "Help & Support", null, { go(Routes.HELP) })
-            SettingsRow(Icons.Rounded.Info, "About Tervyn", null, { go(Routes.ABOUT) })
-        }
-        Spacer(Modifier.height(Space.m))
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            NeonButton("Report a Problem", { go(Routes.REPORT) }, Modifier.weight(1f), icon = Icons.Rounded.BugReport, secondary = true)
-            NeonButton("Rate Our App", {
-                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                    .onFailure { vm.toast("No app store available") }
-            }, Modifier.weight(1f), icon = Icons.Rounded.Star)
-        }
-    }
-    when (confirm) {
-        "cache" -> Confirm("Clear cache?", "Removes cached free servers and temporary files. Your own servers are kept.", { vm.clearCache() }) { confirm = null }
-        "history" -> Confirm("Clear history?", "Deletes connection history, speed tests and events stored on this phone.", { vm.clearHistory() }) { confirm = null }
-        "reset" -> Confirm("Reset settings?", "Restores default settings and removes the app lock PIN. Servers and websites are kept.", { vm.resetSettings() }) { confirm = null }
-    }
-}
-
-
-
-@Composable
-fun PermissionsScreen(vm: MainViewModel, onBack: () -> Unit, connect: () -> Unit) {
-    val c = Tervyn.colors
-    val ctx = LocalContext.current
-    var refresh by remember { mutableStateOf(0) }
-    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
-    val vpnGranted = remember(refresh) { vm.c.controller.needsPermission() == null }
-    val notifGranted = remember(refresh) { Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED }
-    val pm = ctx.getSystemService(PowerManager::class.java)
-    val battery = remember(refresh) { pm.isIgnoringBatteryOptimizations(ctx.packageName) }
-    ScreenScaffold("App Permissions & VPN Protection", "Tervyn only asks for what a VPN needs.", onBack, heroIcon = Icons.Rounded.Lock, accentWord = "VPN Protection") {
-        GlassCard {
-            SettingsRow(Icons.Rounded.Shield, "VPN connection", if (vpnGranted) "Granted" else "Requested when you first connect", if (!vpnGranted) connect else null,
-                valueColor = if (vpnGranted) c.green else c.amber)
-            SettingsRow(Icons.Rounded.Notifications, "Notifications", if (notifGranted) "Granted" else "Needed to show the connection status",
-                if (!notifGranted && Build.VERSION.SDK_INT >= 33) ({ notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) else null, valueColor = if (notifGranted) c.green else c.amber)
-            SettingsRow(Icons.Rounded.BatteryAlert, "Battery optimisation", if (battery) "Unrestricted" else "Optimised — the VPN may be stopped during deep sleep", {
-                runCatching { ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }, valueColor = if (battery) c.green else c.amber)
-            SettingsRow(Icons.Rounded.Fingerprint, "Biometrics", "Used only if you enable App Lock", null)
-        }
-        Spacer(Modifier.height(Space.m))
-        NotificationCard("Not requested", "No location, contacts, camera, microphone, storage, accessibility or account permissions. The app list in App Exclusions uses Android's launcher query and does not read app data.", Tone.SUCCESS)
-        Spacer(Modifier.height(Space.s))
-        NeonButton("Open app settings", {
-            ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }, Modifier.fillMaxWidth(), secondary = true)
-        Spacer(Modifier.height(Space.s))
-        NeonButton("Refresh", { refresh++ }, Modifier.fillMaxWidth(), secondary = true)
-    }
-}
 
 @Composable
 fun QuickSettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Quick Settings & Notifications", null, onBack, heroIcon = Icons.Rounded.Widgets, accentWord = "Notifications") {
+    ScreenScaffold("Quick Settings & Notifications", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_bell, accentWord = "Notifications") {
         GlassCard {
             SettingsRow(Icons.Rounded.Widgets, "Add Quick Settings tile", "Toggle Tervyn from the notification shade", {
                 if (Build.VERSION.SDK_INT >= 33) {
@@ -287,7 +152,7 @@ fun ThemeScreen(vm: MainViewModel, onBack: () -> Unit) {
     val c = Tervyn.colors
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Theme", "Tervyn is designed for dark mode", onBack, heroIcon = Icons.Rounded.Palette, accentWord = "Theme") {
+    ScreenScaffold("Theme", "Tervyn is designed for dark mode", onBack, heroArt = com.tervyn.vpn.R.drawable.art_about, accentWord = "Theme") {
         GlassCard {
             AppTheme.entries.forEach { t ->
                 SettingsRow(Icons.Rounded.Palette, t.label, null, { vm.updateSettings { it.copy(theme = t) } }) {

@@ -125,13 +125,10 @@ fun showBiometric(activity: FragmentActivity, onSuccess: () -> Unit) {
     )
 }
 
-private data class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
-
 private val tabs = listOf(
-    Tab(Routes.HOME, "Home", Icons.Rounded.Home),
-    Tab(Routes.SERVERS, "Servers", Icons.Rounded.BarChart),
-    Tab(Routes.SITES, "My Sites", Icons.Rounded.TrackChanges),
-    Tab(Routes.SETTINGS, "Settings", Icons.Rounded.Settings),
+    Triple(Routes.HOME, "Home", Icons.Rounded.Home),
+    Triple(Routes.SERVERS, "Servers", Icons.Rounded.BarChart),
+    Triple(Routes.SETTINGS, "Settings", Icons.Rounded.Settings),
 )
 
 @Composable
@@ -154,28 +151,16 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
 
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val showBar = tabs.any { it.route == route }
+    val showBar = tabs.any { it.first == route } || route == Routes.SITES
 
     Scaffold(
         containerColor = c.bg,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (showBar) NavigationBar(containerColor = c.bg2, tonalElevation = androidx.compose.ui.unit.Dp(0f)) {
-                tabs.forEach { t ->
-                    NavigationBarItem(
-                        selected = route == t.route,
-                        onClick = { nav.navigateTab(t.route) },
-                        icon = { Icon(t.icon, null) },
-                        label = { Text(t.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = c.cyan, selectedTextColor = c.cyan, indicatorColor = c.blue.copy(alpha = .22f),
-                            unselectedIconColor = c.text2, unselectedTextColor = c.text2,
-                        ),
-                    )
-                }
-            }
+            if (showBar) com.tervyn.vpn.ui.components.TervynBottomBar(tabs, route) { nav.navigateTab(it) }
         },
     ) { pad ->
+        androidx.compose.runtime.CompositionLocalProvider(com.tervyn.vpn.ui.components.LocalGo provides { r: String -> if (tabs.any { it.first == r }) nav.navigateTab(r) else nav.navigate(r) { launchSingleTop = true } }) {
         NavHost(
             nav, startDestination = Routes.HOME, modifier = Modifier.padding(bottom = pad.calculateBottomPadding()),
             enterTransition = { fadeIn() }, exitTransition = { fadeOut() },
@@ -185,7 +170,7 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             composable(Routes.HOME) { HomeScreen(vm, connect, go) }
             composable(Routes.CONNECTING) { ConnectingScreen(vm, back, onConnected = { nav.navigate(Routes.CONNECTED) { popUpTo(Routes.HOME) } }) }
             composable(Routes.CONNECTED) { ConnectedScreen(vm, back, go) }
-            composable(Routes.SERVERS) { ServersScreen(vm, go, onBack = null) }
+            composable(Routes.SERVERS) { ServersScreen(vm, go, onBack = { nav.navigateTab(Routes.HOME) }) }
             composable(Routes.SERVER, arguments = listOf(navArgument("id") { type = NavType.StringType })) {
                 ServerDetailsScreen(vm, it.arguments?.getString("id") ?: "", back)
             }
@@ -197,7 +182,7 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             composable(Routes.LIST_IMPORT) { ListImportScreen(vm, back) }
             composable(Routes.INTEGRATION) { IntegrationScreen(vm, back) }
             composable(Routes.PROTOCOLS) { ProtocolSelectionScreen(back, go) }
-            composable(Routes.SETTINGS) { SettingsScreen(vm, go, connect) }
+            composable(Routes.SETTINGS) { SettingsScreen(vm, go, connect, onBack = { nav.navigateTab(Routes.HOME) }) }
             composable(Routes.SITES) { SitesScreen(vm, go) }
             composable(Routes.SPLIT) { SplitTunnelScreen(vm, back) }
             composable(Routes.COUNTRIES) { CountryScreen(vm, back) }
@@ -223,6 +208,7 @@ fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
             composable(Routes.FREE_SOURCES) { FreeSourcesScreen(vm, back) }
             composable(Routes.THEME) { ThemeScreen(vm, back) }
             composable(Routes.TERMS) { TermsScreen(back) }
+        }
         }
     }
     // Follow the connection flow: show the connecting screen while busy from Home.

@@ -108,7 +108,7 @@ fun SourcesScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
         Triple(SourceMode.INTEGRATION, Icons.Rounded.Extension, "curl / Python / Node.js"),
         Triple(SourceMode.LIST_FILE, Icons.Rounded.Description, ".txt file"),
     )
-    ScreenScaffold("Advanced Settings", "Configure your server source and proxy options", onBack, heroIcon = Icons.Rounded.Storage, accentWord = "Settings") {
+    ScreenScaffold("Advanced Settings", "Configure your server source and proxy options", onBack) {
         GlassCard(highlight = true) {
             CardTitle(Icons.Rounded.Storage, "Server Source", "Choose how to get your VPN servers")
             options.chunked(2).forEach { row ->
@@ -195,7 +195,7 @@ fun ProtocolSelectionScreen(onBack: () -> Unit, go: (String) -> Unit) {
         listOf("HTTP", "Basic · Universal (CONNECT)", "Native"),
     )
     val icons = listOf(Icons.Rounded.Bolt, Icons.Rounded.Shuffle, Icons.Rounded.Shield, Icons.Rounded.Send, Icons.Rounded.Hub, Icons.Rounded.Language)
-    ScreenScaffold("VPN Protocol Selection", "Choose the protocol of the server you want to add.", onBack, heroIcon = Icons.Rounded.Lock, accentWord = "Protocol") {
+    ScreenScaffold("VPN Protocol Selection", "Choose the protocol of the server you want to add.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_protocol, accentWord = "Protocol") {
         protos.forEachIndexed { i, (name, desc, badge) ->
             GlassCard(highlight = sel == i, onClick = { sel = i }, padding = PaddingValues(horizontal = Space.m, vertical = Space.m)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -238,7 +238,7 @@ fun AddProxyScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) 
     val hostErr = if (host.isNotBlank() && !ProxyList.isValidHost(host.trim())) "Invalid host" else null
     val portErr = if (port.isNotBlank() && port.toIntOrNull()?.let(ProxyList::validPort) != true) "1–65535" else null
     val valid = host.isNotBlank() && port.isNotBlank() && hostErr == null && portErr == null
-    ScreenScaffold("Add Custom Proxy", "Enter your proxy details or import a list", onBack, heroIcon = Icons.Rounded.Router, accentWord = "Proxy") {
+    ScreenScaffold("Add Custom Proxy", "Enter your proxy details or import a list", onBack) {
         SegmentedTabs(listOf("Manual Entry" to Icons.Rounded.Keyboard, "Import List (.txt)" to Icons.Rounded.Description, "From Code" to Icons.Rounded.Code), 0, { i ->
             if (i == 1) go(Routes.LIST_IMPORT) else if (i == 2) go(Routes.INTEGRATION)
         })
@@ -335,7 +335,7 @@ fun ImportLinkScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit
         }
         Spacer(Modifier.height(Space.s))
     }
-    ScreenScaffold("Import VLESS / VMess Configuration", "Add your server configuration in multiple ways", onBack, heroIcon = Icons.Rounded.Lock, accentWord = "VLESS / VMess") {
+    ScreenScaffold("Import VLESS / VMess Configuration", "Add your server configuration in multiple ways", onBack, heroArt = com.tervyn.vpn.R.drawable.art_import, accentWord = "VLESS / VMess") {
         Option(Icons.Rounded.QrCode2, "Scan QR Code from Image", "Pick a screenshot or photo of the QR code (no camera permission needed)") { qr.launch("image/*") }
         Option(Icons.Rounded.Link, "Paste Share Link", "Paste your vless://, vmess://, trojan:// or ss:// link") { showPaste = true }
         Option(Icons.Rounded.Description, "Add from Subscription URL", "Import and update multiple servers") { go(Routes.SUBSCRIPTIONS) }
@@ -364,7 +364,7 @@ fun DnsScreen(vm: MainViewModel, onBack: () -> Unit) {
     var lookup by rememberSaveable { mutableStateOf(s.ipLookupUrl) }
     val current = DohForwarder.PRESETS.entries.firstOrNull { it.value == s.dohUrl }?.key ?: "Custom DNS"
     val tints = listOf(c.amber, c.blue, c.purple, c.green, c.red)
-    ScreenScaffold("DNS Settings & Configuration", "Choose your encrypted DNS provider or set a custom one.", onBack, heroIcon = Icons.Rounded.Dns, accentWord = "DNS") {
+    ScreenScaffold("DNS Settings & Configuration", "Choose your encrypted DNS provider or set a custom one.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_dns, accentWord = "DNS") {
         GlassCard(highlight = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Settings, null, tint = c.cyan, modifier = Modifier.size(36.dp)); Spacer(Modifier.width(Space.m))
@@ -425,7 +425,7 @@ fun PrivacyCenterScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> U
     )
     val known = items.filter { it.active != null }
     val score = if (known.isEmpty()) 0 else known.count { it.active == true } * 100 / known.size
-    ScreenScaffold("Privacy & Security Center", "What Tervyn protects — measured, not promised.", onBack, heroIcon = Icons.Rounded.Lock, accentWord = "Security Center") {
+    ScreenScaffold("Privacy & Security Center", "What Tervyn protects — measured, not promised.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_privacy, accentWord = "Security Center") {
         GlassCard(highlight = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.VerifiedUser, null, tint = if (connected) c.green else c.amber, modifier = Modifier.size(52.dp)); Spacer(Modifier.width(Space.m))
@@ -475,7 +475,7 @@ fun NotificationsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val settings by vm.settings.collectAsState()
     val events by vm.events.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("VPN Connection Notifications", "Stay informed about your VPN connection status.", onBack, heroIcon = Icons.Rounded.Notifications, accentWord = "Notifications") {
+    ScreenScaffold("VPN Connection Notifications", "Stay informed about your VPN connection status.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_bell, accentWord = "Notifications") {
         GlassCard(highlight = true) {
             ToggleSetting(Icons.Rounded.NotificationsActive, "Enable Notifications", "Get important VPN alerts", s.notificationsEnabled, { v -> vm.updateSettings { it.copy(notificationsEnabled = v) } })
         }
@@ -523,7 +523,7 @@ fun AppLockScreen(vm: MainViewModel, onBack: () -> Unit, activity: FragmentActiv
         BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS
     }
     val enabled = pinHash != null && s.appLock
-    ScreenScaffold("App Lock & Biometric Security", "Lock Tervyn and protect your settings with biometrics.", onBack, heroIcon = Icons.Rounded.Fingerprint, accentWord = "Biometric Security") {
+    ScreenScaffold("App Lock & Biometric Security", "Lock Tervyn and protect your settings with biometrics.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_lock, accentWord = "Biometric Security") {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             listOf(Triple(Icons.Rounded.Fingerprint, "Fingerprint", canBio), Triple(Icons.Rounded.Face, "Face Unlock", canBio), Triple(Icons.Rounded.Pin, "PIN Code", true)).forEach { (icon, label, ok) ->
                 GlassCard(Modifier.weight(1f), highlight = enabled && (label == "PIN Code" || s.biometric), padding = PaddingValues(Space.m)) {
@@ -592,7 +592,7 @@ fun SplitTunnelScreen(vm: MainViewModel, onBack: () -> Unit) {
         val next = if (on) selected + pkg else selected - pkg
         if (only) vm.setIncludedApps(next) else vm.setExcludedApps(next)
     }
-    ScreenScaffold("Split Tunneling & App Exclusions", "Choose which apps use the VPN and which bypass it.", onBack, heroIcon = Icons.Rounded.CallSplit, accentWord = "App Exclusions") {
+    ScreenScaffold("Split Tunneling & App Exclusions", "Choose which apps use the VPN and which bypass it.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_split, accentWord = "App Exclusions") {
         SegmentedTabs(listOf("Bypass selected apps" to Icons.Rounded.RemoveCircleOutline, "Only selected use VPN" to Icons.Rounded.Lock), if (only) 1 else 0, { i ->
             vm.setSplitMode(if (i == 1) SplitMode.ONLY_SELECTED else SplitMode.BYPASS)
         })
@@ -633,7 +633,7 @@ fun SplitTunnelScreen(vm: MainViewModel, onBack: () -> Unit) {
 fun AboutScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
     val c = Tervyn.colors
     val xrayVersion by produceState<String?>(null) { value = withContext(Dispatchers.IO) { vm.c.xray.version() } }
-    ScreenScaffold("About Tervyn", "Fast. Secure. Free. A VPN client with no accounts and no ads.", onBack, heroIcon = Icons.Rounded.Shield, accentWord = "Tervyn") {
+    ScreenScaffold("About Tervyn", "Fast. Secure. Free. A VPN client with no accounts and no ads.", onBack, heroArt = com.tervyn.vpn.R.drawable.art_about, accentWord = "Tervyn") {
         GlassCard(highlight = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TervynLogo(84.dp); Spacer(Modifier.width(Space.l))
@@ -665,7 +665,7 @@ fun AboutScreen(vm: MainViewModel, onBack: () -> Unit, go: (String) -> Unit) {
 @Composable
 fun TermsScreen(onBack: () -> Unit) {
     val c = Tervyn.colors
-    ScreenScaffold("Terms of Use", null, onBack, heroIcon = Icons.Rounded.Gavel, accentWord = "Terms") {
+    ScreenScaffold("Terms of Use", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_privacy, accentWord = "Terms") {
         listOf(
             "Free software" to "Tervyn VPN is provided free of charge, as is, without warranty of any kind.",
             "Third-party servers" to "Free public proxies and servers you add are operated by third parties. You are responsible for which servers you use and for complying with their terms and with local laws.",

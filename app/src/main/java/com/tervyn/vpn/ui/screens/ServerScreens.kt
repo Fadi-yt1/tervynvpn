@@ -78,92 +78,6 @@ import com.tervyn.vpn.utils.Format
 
 private enum class ServerFilter(val label: String) { ALL("All"), VERIFIED("Verified"), FAVORITES("Favorites"), RECENT("Recent") }
 
-@Composable
-fun ServersScreen(vm: MainViewModel, go: (String) -> Unit, onBack: (() -> Unit)?) {
-    val c = Tervyn.colors
-    val servers by vm.servers.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val status by vm.status.collectAsState()
-    val progress by vm.progress.collectAsState()
-    val s = settings ?: return
-    var query by rememberSaveable { mutableStateOf("") }
-    var filter by rememberSaveable { mutableStateOf(ServerFilter.VERIFIED) }
-    val pool = servers.filter { it.origin in s.sourceMode.origins }
-
-    ScreenScaffold("Servers", "Choose a country or use the fastest server", onBack, actions = {
-        IconButton(onClick = { if (progress.running) vm.cancelRefresh() else vm.refreshServers() }) {
-            Icon(Icons.Rounded.Refresh, if (progress.running) "Cancel refresh" else "Refresh", tint = c.cyan)
-        }
-    }) {
-        if (progress.running) {
-            GlassCard {
-                Text("${progress.phase} · ${progress.tested}/${progress.total} · ${progress.working} working", color = c.text2, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(progress = { if (progress.total == 0) 0f else progress.tested.toFloat() / progress.total },
-                    modifier = Modifier.fillMaxWidth().clip(CircleShape), color = c.cyan, trackColor = c.bg2)
-            }
-            Spacer(Modifier.height(Space.s))
-        }
-        // Fastest available
-        GlassCard(highlight = s.autoSwitch && s.preferredCountry == null, onClick = { vm.selectCountry(null) }) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Bolt, null, tint = c.amber, modifier = Modifier.size(36.dp))
-                Spacer(Modifier.width(Space.m))
-                Column(Modifier.weight(1f)) {
-                    Text("Fastest Available", style = MaterialTheme.typography.titleMedium, color = c.text)
-                    Text("Automatically selects the best server · auto-switch on", style = MaterialTheme.typography.bodySmall, color = c.text2)
-                }
-                Pill("Recommended", c.green)
-            }
-        }
-        Spacer(Modifier.height(Space.s))
-        Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            NeonButton("Countries", { go(Routes.COUNTRIES) }, Modifier.weight(1f), icon = Icons.Rounded.Public, secondary = true)
-            NeonButton("Add server", { go(Routes.PROTOCOLS) }, Modifier.weight(1f), icon = Icons.Rounded.Add, secondary = true)
-        }
-        Spacer(Modifier.height(Space.s))
-        Text("Source: ${s.sourceMode.label} · ${pool.size} servers, ${pool.count { it.alive }} verified", color = c.text3, style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.clickable { go(Routes.SOURCES) })
-        Spacer(Modifier.height(Space.s))
-        ProxyInputField(query, { query = it }, "Search servers, countries, protocols", placeholder = "e.g. Germany, VLESS, 1.2.3.4")
-        Row(Modifier.padding(vertical = Space.s), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            ServerFilter.entries.forEach { f ->
-                FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = c.blue.copy(alpha = .3f), selectedLabelColor = c.cyan, labelColor = c.text2))
-            }
-        }
-        val q = query.trim().lowercase()
-        val shown = pool.filter { srv ->
-            when (filter) {
-                ServerFilter.ALL -> true
-                ServerFilter.VERIFIED -> srv.alive
-                ServerFilter.FAVORITES -> srv.favorite
-                ServerFilter.RECENT -> srv.lastUsed > 0
-            }
-        }.filter { srv ->
-            q.isEmpty() || srv.name.lowercase().contains(q) || srv.protocolLabel.lowercase().contains(q) ||
-                Format.countryName(srv.countryCode).lowercase().contains(q) || (srv.countryCode?.lowercase() == q)
-        }.let { l -> if (filter == ServerFilter.RECENT) l.sortedByDescending { it.lastUsed } else vm.ranked(l.filter { it.alive }) + l.filter { !it.alive } }
-            .take(300)
-        if (shown.isEmpty()) {
-            if (progress.running) LoadingIndicator("Testing servers…")
-            else EmptyState(Icons.Rounded.Search, "No servers here yet",
-                if (filter == ServerFilter.VERIFIED) "Tap refresh to download and test servers, or connect — Tervyn finds servers automatically." else "Try another filter.") {
-                NeonButton("Find servers", { vm.refreshServers() }, icon = Icons.Rounded.Refresh)
-            }
-        }
-        shown.forEach { srv ->
-            ServerCard(srv, selected = (!s.autoSwitch && s.selectedServerId == srv.id) || status.server?.id == srv.id,
-                onClick = { go(Routes.server(srv.id)) }, onFavorite = { vm.toggleFavorite(srv) })
-            Spacer(Modifier.height(Space.s))
-        }
-        Spacer(Modifier.height(Space.s))
-        GlassCard {
-            ToggleSetting(Icons.Rounded.VerifiedUser, "Auto-Switch to Fastest Server", "Tervyn will switch to a faster server when available", s.autoSwitch, { vm.setAutoSwitch(it) }, tint = c.green)
-        }
-    }
-}
-
 
 @Composable
 private fun Detail(label: String, value: String) {
@@ -183,7 +97,7 @@ fun CountryScreen(vm: MainViewModel, onBack: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     // Only countries proven by a successful test (exit IP geolocated by Cloudflare) are listed.
     val byCountry = servers.filter { it.origin in s.sourceMode.origins && it.alive && it.countryCode != null }.groupBy { it.countryCode!! }
-    ScreenScaffold("Country", "Only countries of verified servers are shown", onBack, heroIcon = Icons.Rounded.Public, accentWord = "Country") {
+    ScreenScaffold("Country", "Only countries of verified servers are shown", onBack, heroArt = com.tervyn.vpn.R.drawable.art_dns, accentWord = "Country") {
         GlassCard(highlight = s.preferredCountry == null, onClick = { vm.selectCountry(null); onBack() }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Bolt, null, tint = c.amber); Spacer(Modifier.width(Space.m))
@@ -220,7 +134,7 @@ fun AutoSwitchScreen(vm: MainViewModel, onBack: () -> Unit) {
     val c = Tervyn.colors
     val settings by vm.settings.collectAsState()
     val s = settings ?: return
-    ScreenScaffold("Auto-Switch", "How Tervyn picks and changes servers", onBack, heroIcon = Icons.Rounded.Bolt, accentWord = "Switch") {
+    ScreenScaffold("Auto-Switch", "How Tervyn picks and changes servers", onBack, heroArt = com.tervyn.vpn.R.drawable.art_server, accentWord = "Switch") {
         GlassCard {
             ToggleSetting(Icons.Rounded.Bolt, "Auto-switch to fastest server", if (s.autoSwitch) "On: uses the fastest verified server and keeps backups ready" else "Off: stays on your selected server", s.autoSwitch, { vm.setAutoSwitch(it) }, tint = c.green)
         }

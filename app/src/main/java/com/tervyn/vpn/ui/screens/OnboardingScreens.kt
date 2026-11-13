@@ -3,6 +3,11 @@ package com.tervyn.vpn.ui.screens
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +50,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.times
 import androidx.compose.ui.unit.sp
 import com.tervyn.vpn.security.PinHasher
 import com.tervyn.vpn.ui.MainViewModel
@@ -197,31 +203,43 @@ private fun WelcomeFeature(icon: androidx.compose.ui.graphics.vector.ImageVector
 @Composable
 private fun WelcomePage(onStart: () -> Unit, onSkip: () -> Unit) {
     val c = Tervyn.colors
-    Row(Modifier.fillMaxWidth().padding(top = Space.s), horizontalArrangement = Arrangement.End) {
-        androidx.compose.material3.TextButton(onSkip) { Text("Skip ›", color = c.text) }
-    }
-    Box(Modifier.fillMaxWidth().height(300.dp), contentAlignment = Alignment.Center) {
-        AnimatedGlobe(Modifier.size(300.dp), active = true)
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TervynLogo(88.dp)
-            com.tervyn.vpn.ui.components.GlowShield(Icons.Rounded.Lock, 170.dp)
+    Box(Modifier.fillMaxWidth().aspectRatio(852f / 600f)) {
+        com.tervyn.vpn.ui.components.Art(com.tervyn.vpn.R.drawable.art_welcome, Modifier.fillMaxSize(), androidx.compose.ui.layout.ContentScale.Crop)
+        // Real Skip button placed over the artwork's Skip pill.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val k = maxWidth / 852f
+            Row(
+                Modifier.offset(x = 676f * k, y = 8f * k).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+                    .background(androidx.compose.ui.graphics.Color(0xFF0B1638))
+                    .border(1.5.dp, androidx.compose.ui.graphics.Color(0xFF2F4DA0), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                    .clickable(onClick = onSkip).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) { Text("Skip ›", color = c.text, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
         }
     }
-    Text("Welcome to", style = MaterialTheme.typography.headlineSmall, color = c.text)
-    Text(com.tervyn.vpn.ui.components.twoTone("Tervyn VPN", "VPN", c.text, c.blue), style = MaterialTheme.typography.displaySmall.copy(fontSize = 40.sp))
-    Text("Browse Freely. Stay in Control.", style = MaterialTheme.typography.titleMedium, color = c.text2)
+    Text("Welcome to", color = c.text, fontSize = 40.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+    Text(com.tervyn.vpn.ui.components.twoTone("Tervyn VPN", "VPN", c.text, androidx.compose.ui.graphics.Color(0xFF1E88FF)), fontSize = 52.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+    Text("Browse Freely. Stay Secure.", color = androidx.compose.ui.graphics.Color(0xFFB9C7FF), fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
     Spacer(Modifier.height(Space.l))
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-        WelcomeFeature(Icons.Rounded.Bolt, "Fastest server", "Picked automatically", c.blue, Modifier.weight(1f))
-        WelcomeFeature(Icons.Rounded.Shield, "Verified HTTPS", "Every server tested", c.green, Modifier.weight(1f))
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(3) { i -> Box(Modifier.size(22.dp).clip(CircleShape).background(if (i == 0) androidx.compose.ui.graphics.Color(0xFF1EA8FF) else androidx.compose.ui.graphics.Color(0xFF1C2A55))) }
     }
-    Spacer(Modifier.height(Space.s))
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-        WelcomeFeature(Icons.Rounded.VisibilityOff, "Hide your IP", "From the sites you visit", c.purple, Modifier.weight(1f))
-        WelcomeFeature(Icons.Rounded.Public, "Your sites only", "Or route all apps", c.amber, Modifier.weight(1f))
+    Spacer(Modifier.height(Space.l))
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        WelcomeFeature(Icons.Rounded.Bolt, "Ultra Fast Connection", "Fastest server, picked for you", c.blue, Modifier.weight(1f))
+        WelcomeFeature(Icons.Rounded.Shield, "Verified HTTPS Servers", "Every server is tested", c.green, Modifier.weight(1f))
+    }
+    Spacer(Modifier.height(Space.m))
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        WelcomeFeature(Icons.Rounded.VisibilityOff, "Hide Your IP", "From the sites you visit", c.purple, Modifier.weight(1f))
+        WelcomeFeature(Icons.Rounded.Public, "Access More Content", "Reach blocked sites", c.amber, Modifier.weight(1f))
     }
     Spacer(Modifier.height(Space.xl))
-    NeonButton("Get Started  ›", onStart, Modifier.fillMaxWidth())
-    Spacer(Modifier.height(Space.s))
-    Text("Free · No account · No ads", color = c.text2, style = MaterialTheme.typography.bodySmall)
+    NeonButton("Get Started  ›", onStart, Modifier.fillMaxWidth().height(68.dp))
+    Spacer(Modifier.height(Space.m))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.Shield, null, tint = androidx.compose.ui.graphics.Color(0xFF29B6FF))
+        Spacer(Modifier.width(8.dp))
+        Text("Free · No account · No ads", color = c.text2, fontSize = 18.sp)
+    }
 }

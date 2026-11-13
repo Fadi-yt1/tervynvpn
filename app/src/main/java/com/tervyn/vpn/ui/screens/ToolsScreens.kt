@@ -102,7 +102,7 @@ fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
         while (upHist.size > 60) upHist.removeAt(0)
     }
     val now = rememberNow(status.isConnected)
-    ScreenScaffold("Connection Statistics", if (status.isConnected) "Live" else "Not connected", onBack, heroIcon = Icons.Rounded.Insights, accentWord = "Statistics") {
+    ScreenScaffold("Connection Statistics", if (status.isConnected) "Live" else "Not connected", onBack, heroArt = com.tervyn.vpn.R.drawable.art_diagnostics, accentWord = "Statistics") {
         GlassCard {
             Text("Throughput (last 60 s)", color = c.text, style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(Space.s))

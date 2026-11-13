@@ -57,7 +57,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun HelpScreen(onBack: () -> Unit, go: (String) -> Unit) {
-    ScreenScaffold("Help & Support", null, onBack, heroIcon = Icons.Rounded.SupportAgent, accentWord = "Support") {
+    ScreenScaffold("Help & Support", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_diagnostics, accentWord = "Support") {
         GlassCard {
             SettingsRow(Icons.Rounded.QuestionAnswer, "FAQ", "Answers to common questions", { go(Routes.FAQ) })
             SettingsRow(Icons.Rounded.BugReport, "Network diagnostics", "Find out why something doesn't work", { go(Routes.DIAGNOSTICS) })
@@ -85,7 +85,7 @@ private val faq = listOf(
 @Composable
 fun FaqScreen(onBack: () -> Unit) {
     val c = Tervyn.colors
-    ScreenScaffold("FAQ", null, onBack, heroIcon = Icons.Rounded.QuestionAnswer, accentWord = "FAQ") {
+    ScreenScaffold("FAQ", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_privacy, accentWord = "FAQ") {
         faq.forEach { (q, a) ->
             var open by rememberSaveable(q) { mutableStateOf(false) }
             GlassCard(Modifier.animateContentSize(), onClick = { open = !open }) {
@@ -110,7 +110,7 @@ fun ReportScreen(vm: MainViewModel, onBack: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     var includeDiag by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(Unit) { if (checks.isEmpty()) vm.runDiagnostics() }
-    ScreenScaffold("Report a Problem", "Nothing is sent automatically", onBack, heroIcon = Icons.Rounded.BugReport, accentWord = "Problem") {
+    ScreenScaffold("Report a Problem", "Nothing is sent automatically", onBack, heroArt = com.tervyn.vpn.R.drawable.art_diagnostics, accentWord = "Problem") {
         ProxyInputField(text, { text = it.take(4000) }, "What happened?", singleLine = false, minLines = 5)
         Spacer(Modifier.height(Space.s))
         GlassCard {
@@ -149,7 +149,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
         "Children" to "Tervyn is not directed at children and does not knowingly collect any personal data.",
         "Changes" to "Changes to this policy ship with app updates and are shown on this screen.",
     )
-    ScreenScaffold("Privacy Policy", null, onBack, heroIcon = Icons.Rounded.Policy, accentWord = "Policy") {
+    ScreenScaffold("Privacy Policy", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_privacy, accentWord = "Policy") {
         sections.forEach { (t, b) ->
             GlassCard {
                 Text(t, color = c.text, style = MaterialTheme.typography.titleSmall)
@@ -177,7 +177,7 @@ fun LicensesScreen(onBack: () -> Unit) {
         "ZXing (core)" to "Apache License 2.0 · © ZXing authors",
         "Material Icons" to "Apache License 2.0 · © Google",
     )
-    ScreenScaffold("Open Source Licenses", null, onBack, heroIcon = Icons.Rounded.Gavel, accentWord = "Licenses") {
+    ScreenScaffold("Open Source Licenses", null, onBack, heroArt = com.tervyn.vpn.R.drawable.art_about, accentWord = "Licenses") {
         libs.forEach { (n, l) ->
             GlassCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {

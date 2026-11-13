@@ -108,16 +108,10 @@ import kotlin.math.sin
 fun TervynLogo(size: Dp = 56.dp, modifier: Modifier = Modifier) {
     val c = Tervyn.colors
     Box(
-        modifier
-            .size(size)
-            .clip(RoundedCornerShape(size * 0.28f))
-            .background(Brush.radialGradient(listOf(Color(0xFF0B2A66), c.bg2, c.bg)))
-            .border(1.dp, Brush.linearGradient(listOf(c.cyan.copy(alpha = .8f), c.purple.copy(alpha = .8f))), RoundedCornerShape(size * 0.28f))
+        modifier.size(size).clip(RoundedCornerShape(size * 0.24f))
+            .border(1.dp, Brush.linearGradient(listOf(c.cyan.copy(alpha = .7f), c.purple.copy(alpha = .8f))), RoundedCornerShape(size * 0.24f))
             .semantics { contentDescription = "Tervyn logo" },
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(size * 1.35f))
-    }
+    ) { Image(painterResource(R.drawable.art_logo), null, Modifier.size(size), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
 }
 
 @Composable
@@ -424,9 +418,9 @@ fun SettingsRow(
             .padding(vertical = Space.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) { IconBadge(icon, tint); Spacer(Modifier.width(Space.m)) }
+        if (icon != null) { Icon(icon, null, tint = tint, modifier = Modifier.size(34.dp)); Spacer(Modifier.width(Space.l)) }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = c.text)
+            Text(title, style = MaterialTheme.typography.titleMedium, color = c.text)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = valueColor ?: c.text2)
         }
         when {
@@ -567,8 +561,9 @@ fun SectionHeader(title: String, icon: ImageVector? = null, modifier: Modifier =
 }
 
 /**
- * Standard screen. With [heroIcon] it uses the hero layout (brand bar, glowing shield art, two-tone title);
- * otherwise a compact title bar (used by the bottom-navigation tabs).
+ * Standard screen in the mockup style. With [heroArt] (or [heroIcon]) it shows the brand header with a back
+ * button followed by the hero illustration and two-tone title; otherwise the brand header followed by a
+ * title row with a circular back button.
  */
 @Composable
 fun ScreenScaffold(
@@ -580,34 +575,25 @@ fun ScreenScaffold(
     heroIcon: ImageVector? = null,
     accentWord: String? = null,
     heroAccent: Color? = null,
+    heroArt: Int? = null,
+    showSettings: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = Tervyn.colors
+    val hero = heroArt != null || heroIcon != null
     Column(Modifier.fillMaxSize().background(c.backgroundGradient).statusBarsPadding()) {
         val body: @Composable ColumnScope.() -> Unit = {
-            if (heroIcon != null) {
-                HeroHeader(title, accentWord, subtitle, heroIcon, heroAccent ?: c.cyan)
-                Spacer(Modifier.height(Space.s))
+            if (hero) {
+                MockHeader(onBack, showSettings)
+                HeroHeader(title, accentWord, subtitle, heroIcon ?: Icons.Rounded.Info, heroAccent ?: c.cyan, heroArt)
+            } else {
+                MockHeader(null, showSettings)
+                TitleRow(title, subtitle, onBack, actions)
             }
+            Spacer(Modifier.height(Space.s))
             Column(Modifier.padding(horizontal = Space.gutter)) {
                 content()
                 Spacer(Modifier.height(Space.xxl))
-            }
-        }
-        if (heroIcon != null) {
-            BrandBar(onBack, actions = actions)
-        } else {
-            Row(Modifier.fillMaxWidth().padding(horizontal = Space.s, vertical = Space.s), verticalAlignment = Alignment.CenterVertically) {
-                if (onBack != null) {
-                    IconButton(onClick = onBack, modifier = Modifier.padding(end = 4.dp).clip(CircleShape).background(c.card)) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", tint = c.text)
-                    }
-                } else Spacer(Modifier.width(Space.s))
-                Column(Modifier.weight(1f).padding(start = Space.s)) {
-                    Text(title, style = MaterialTheme.typography.headlineSmall, color = c.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = c.text2, maxLines = 2)
-                }
-                actions()
             }
         }
         val inner = Modifier.fillMaxWidth().weight(1f)
@@ -637,15 +623,16 @@ fun ModeToggle(mode: VpnMode, onChange: (VpnMode) -> Unit, modifier: Modifier = 
             val sel = m == mode
             Row(
                 Modifier.weight(1f).clip(RoundedCornerShape(50))
-                    .background(if (sel) c.primaryGradient else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)))
+                    .background(if (sel) Brush.horizontalGradient(listOf(Color(0xFF1677FF), Color(0xFF1E9BFF))) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)))
+                    .border(if (sel) 1.5.dp else 0.dp, if (sel) Color(0xFF6FC3FF) else Color.Transparent, RoundedCornerShape(50))
                     .clickable(role = Role.Tab) { onChange(m) }
-                    .padding(vertical = 12.dp)
+                    .padding(vertical = 18.dp)
                     .semantics { contentDescription = "${m.label} mode" + if (sel) ", selected" else "" },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(icon, null, tint = if (sel) Color.White else c.text2, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(m.label, color = if (sel) Color.White else c.text2, style = MaterialTheme.typography.labelLarge)
+                Icon(icon, null, tint = if (sel) Color.White else Color(0xFFC9D6F2), modifier = Modifier.size(30.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(m.label, color = if (sel) Color.White else Color(0xFFC9D6F2), fontSize = 20.sp, fontWeight = FontWeight.Medium)
             }
         }
     }
