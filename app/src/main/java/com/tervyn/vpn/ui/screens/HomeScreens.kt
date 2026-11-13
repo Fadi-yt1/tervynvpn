@@ -174,7 +174,7 @@ fun HomeScreen(vm: MainViewModel, connect: () -> Unit, go: (String) -> Unit) {
             }
             val enabledPresets = domains.mapNotNull { it.presetId }.toSet()
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-                Domains.presets.take(6).forEach { p ->
+                Domains.presets.filter { it.id in setOf("youtube", "instagram", "x", "telegram", "chatgpt") }.forEach { p ->
                     AppTile(p.label, presetEmoji[p.id] ?: "🌐", p.id in enabledPresets, { vm.togglePreset(p, p.id !in enabledPresets) }, Modifier.weight(1f))
                 }
             }

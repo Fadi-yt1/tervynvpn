@@ -634,16 +634,17 @@ fun ModeToggle(mode: VpnMode, onChange: (VpnMode) -> Unit, modifier: Modifier = 
 
 @Composable
 fun AppTile(label: String, emoji: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // Labels must stay readable at 360dp widths: compact style, never clipped mid-word.
     val c = Tervyn.colors
     Column(
-        modifier.widthIn(min = 72.dp).clip(RoundedCornerShape(16.dp)).background(c.card)
+        modifier.widthIn(min = 56.dp).clip(RoundedCornerShape(16.dp)).background(c.card)
             .border(1.dp, if (selected) c.cyan else c.cardBorder, RoundedCornerShape(16.dp))
-            .clickable(role = Role.Checkbox, onClick = onClick).padding(vertical = 10.dp, horizontal = 8.dp)
+            .clickable(role = Role.Checkbox, onClick = onClick).padding(vertical = 10.dp, horizontal = 2.dp)
             .semantics { contentDescription = "$label" + if (selected) ", added" else "" },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(emoji, fontSize = 26.sp)
         Spacer(Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = if (selected) c.cyan else c.text, maxLines = 1)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = if (selected) c.cyan else c.text, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
     }
 }
