@@ -32,7 +32,7 @@ import java.io.File
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [26, 35], qualifiers = "w411dp-h891dp-xxhdpi")
+@Config(sdk = [26, 35], qualifiers = "w411dp-h2600dp-xxhdpi")
 class UiFlowTest {
     @get:Rule val rule = createAndroidComposeRule<MainActivity>()
 
@@ -67,7 +67,7 @@ class UiFlowTest {
         rule.onNodeWithText("Skip", substring = true).performClick(); advance()
         waitText("Before you start")
         shot("02_onboarding_warning")
-        rule.onNodeWithText("Explore first").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Explore first").performClick(); advance()
         waitText("Tap to Connect")
     }
 
@@ -85,7 +85,7 @@ class UiFlowTest {
         waitText("Choose a country or use the fastest server")
         shot("04_servers")
         rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("See All").performClick(); advance()
         waitText("App Presets")
         shot("05_sites")
         rule.onNodeWithText("Settings").performClick(); advance()
@@ -93,7 +93,7 @@ class UiFlowTest {
         shot("06_settings")
         rule.onNodeWithText("Servers").performClick(); advance()
         waitText("Source")
-        rule.onNodeWithText("Source").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Source").performClick(); advance()
         waitText("Configure")
         shot("07_sources")
     }
@@ -101,9 +101,9 @@ class UiFlowTest {
     @Test fun addWebsiteAndSwitchMode() {
         onboard()
         rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("See All").performClick(); advance()
         waitText("Add Website")
-        rule.onNodeWithText("Add Website").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Add Website").performClick(); advance()
         waitText("Website (e.g.")
         rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("https://www.Example.org/some/page?x=1")
         rule.onNodeWithText("Add").performClick(); advance()
@@ -113,16 +113,16 @@ class UiFlowTest {
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current().mode.name } == "ONLY_MY_SITES" }
         shot("08_sites_added")
         // Preset toggle adds all of a service's domains
-        rule.onNodeWithContentDescription("YouTube").performScrollTo().performClick(); advance()
+        rule.onNodeWithContentDescription("YouTube").performClick(); advance()
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.domains.all() }.any { it.domain == "googlevideo.com" } }
     }
 
     @Test fun invalidWebsiteIsRejected() {
         onboard()
         rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("See All").performClick(); advance()
         waitText("Add Website")
-        rule.onNodeWithText("Add Website").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Add Website").performClick(); advance()
         waitText("Website (e.g.")
         rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("javascript:alert(1)")
         rule.onNodeWithText("Add").performClick(); advance()
@@ -134,11 +134,11 @@ class UiFlowTest {
         onboard()
         rule.onNodeWithText("Servers").performClick(); advance()
         waitText("Add server")
-        rule.onNodeWithText("Add server").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Add server").performClick(); advance()
         waitText("Choose the protocol")
         shot("09_protocols")
         rule.onNodeWithText("SOCKS5").performClick(); advance()
-        rule.onNodeWithText("Continue").performScrollTo().performClick(); advance()
+        rule.onNodeWithText("Continue").performClick(); advance()
         waitText("Enter your proxy details")
         rule.onNode(hasText("Server Address")).performTextInput("bad host!")
         advance()
