@@ -41,8 +41,29 @@ object Format {
         return String(Character.toChars(0x1F1E6 + (u[0] - 'A'))) + String(Character.toChars(0x1F1E6 + (u[1] - 'A')))
     }
 
+    /** ISO code of the first regional-indicator flag in [text] (e.g. "🇩🇪 Germany" -> "DE"), or null. */
+    fun countryCodeFromFlag(text: String): String? {
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            val n = Character.charCount(cp)
+            if (cp in 0x1F1E6..0x1F1FF && i + n < text.length) {
+                val cp2 = text.codePointAt(i + n)
+                if (cp2 in 0x1F1E6..0x1F1FF) {
+                    val code = "" + ('A' + (cp - 0x1F1E6)) + ('A' + (cp2 - 0x1F1E6))
+                    return code.takeIf { countryName(it) != it }
+                }
+            }
+            i += n
+        }
+        return null
+    }
+
+    private val shortNames = mapOf("HK" to "Hong Kong", "MO" to "Macao", "TW" to "Taiwan", "US" to "United States", "GB" to "United Kingdom", "AE" to "United Arab Emirates", "KR" to "South Korea")
+
     fun countryName(cc: String?): String {
         if (cc == null) return "Unknown"
+        shortNames[cc.uppercase()]?.let { return it }
         val n = Locale.Builder().setRegion(cc).build().getDisplayCountry(Locale.ENGLISH)
         return n.ifBlank { cc }
     }

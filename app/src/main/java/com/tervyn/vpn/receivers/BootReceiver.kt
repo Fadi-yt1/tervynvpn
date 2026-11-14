@@ -9,7 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** Optionally reconnects after boot / app update, only if the VPN permission is already granted. */
+/** After boot / app update: reconnects (if enabled) or resumes Secure DNS, only if the VPN permission is already granted. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
@@ -18,7 +18,11 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val s = container.settings.current()
-                if (s.autoConnectOnBoot && s.onboardingDone && VpnService.prepare(context) == null) container.controller.connect()
+                if (!s.onboardingDone || VpnService.prepare(context) != null) return@launch
+                when {
+                    s.autoConnectOnBoot -> container.controller.connect()
+                    s.secureDns -> container.controller.startSecureDns()
+                }
             } finally {
                 pending.finish()
             }

@@ -15,8 +15,12 @@ Bump `versionCode` for every store upload.
 keytool -genkeypair -v -keystore release.jks -alias tervyn -keyalg RSA -keysize 4096 -validity 10000
 ```
 Copy `keystore.properties.example` → `keystore.properties` and fill in the values.
-Both `*.jks` and `keystore.properties` are git-ignored — keep backups somewhere safe. For CI, write the
-file from secrets at build time.
+Both `*.jks` and `keystore.properties` are git-ignored — keep backups somewhere safe. **Every future update must be
+signed with the same key**, or Android refuses to install it over the existing app.
+
+GitHub Actions signs automatically when these repository secrets exist: `KEYSTORE_BASE64` (`base64 -w0 release.jks`),
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. The workflow writes `keystore.properties` only for the duration of the
+build and deletes it afterwards.
 
 ## 3. Build
 ```bash
@@ -32,5 +36,7 @@ Without `keystore.properties` the release APK/AAB is produced **unsigned** (`*-u
 - Upload the AAB; Play delivers only the matching ABI's `libxray.so` to each device.
 - The VPN service uses `foregroundServiceType="specialUse"` (subtype `vpn`); the Play Console asks for a
   justification of the foreground service and the VpnService declaration form.
-- Privacy policy text is in the app (Settings → About → Privacy Policy); host a copy for the listing.
-- Include the MPL-2.0 notice for Xray-core (already in the app under Open Source Licenses).
+- Privacy text is in the app (Settings → About → Privacy); host a copy for the listing.
+- Open-source notices (Xray-core MPL-2.0, Manrope OFL-1.1) are in the app under About → Open-source licences.
+- When the built-in server table (`core/BuiltinServers.kt`) changes, bump `BuiltinServers.VERSION` so installed apps
+  pick up the new links; `BuiltinServersTest` validates the table against the real Xray binary.

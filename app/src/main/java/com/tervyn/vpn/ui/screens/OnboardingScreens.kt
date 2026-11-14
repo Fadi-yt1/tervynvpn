@@ -1,13 +1,7 @@
 package com.tervyn.vpn.ui.screens
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.material3.Icon
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,225 +15,167 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Public
-import androidx.compose.material.icons.rounded.Shield
-import androidx.compose.material.icons.rounded.TrackChanges
-import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material.icons.rounded.VerifiedUser
+import androidx.compose.material.icons.rounded.VpnKey
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.times
-import androidx.compose.ui.unit.sp
-import com.tervyn.vpn.security.PinHasher
+import com.tervyn.vpn.core.BuiltinServers
 import com.tervyn.vpn.ui.MainViewModel
-import com.tervyn.vpn.ui.components.AnimatedGlobe
+import com.tervyn.vpn.ui.components.BrandMark
+import com.tervyn.vpn.ui.components.GhostButton
 import com.tervyn.vpn.ui.components.IconBadge
-import com.tervyn.vpn.ui.components.NeonButton
-import com.tervyn.vpn.ui.components.NotificationCard
-import com.tervyn.vpn.ui.components.ProxyInputField
-import com.tervyn.vpn.ui.components.TervynLogo
-import com.tervyn.vpn.ui.components.Tone
+import com.tervyn.vpn.ui.components.PrimaryButton
+import com.tervyn.vpn.ui.components.SecondaryButton
 import com.tervyn.vpn.ui.theme.Space
 import com.tervyn.vpn.ui.theme.Tervyn
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/** Animated brand splash shown after the system splash on first launch. */
-@Composable
-fun SplashScreen(onDone: () -> Unit) {
-    val c = Tervyn.colors
-    val scale = remember { Animatable(0.7f) }
-    val alpha = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
-        alpha.animateTo(1f, tween(450))
-        scale.animateTo(1f, tween(500))
-        delay(450)
-        onDone()
-    }
-    Box(Modifier.fillMaxSize().background(c.backgroundGradient), contentAlignment = Alignment.Center) {
-        AnimatedGlobe(Modifier.size(320.dp).alpha(0.6f), active = true)
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(alpha.value).scale(scale.value)) {
-            TervynLogo(112.dp)
-            Spacer(Modifier.height(Space.l))
-            Text("Tervyn VPN", style = MaterialTheme.typography.displaySmall, color = c.text)
-            Text("Fast • Secure • Free", style = MaterialTheme.typography.bodyMedium, color = c.text2)
-        }
-    }
-}
-
-private data class Page(val title: String, val text: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+private data class Page(val title: String, val text: String, val points: List<Triple<ImageVector, String, String>>)
 
 private val pages = listOf(
-    Page("One tap. Real VPN.", "Tervyn finds working servers, tests them over verified HTTPS and connects you to the fastest one automatically.", Icons.Rounded.Bolt),
-    Page("Only the sites you choose", "Route everything, or only selected websites and apps through the VPN while the rest stays on your normal connection.", Icons.Rounded.TrackChanges),
-    Page("Free, no account, no ads", "Use free public servers or bring your own (VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP). Nothing to sign up for.", Icons.Rounded.Public),
+    Page(
+        "Private browsing, no strings", "A free VPN with no account, no ads and no tracking.",
+        listOf(
+            Triple(Icons.Rounded.Public, "${BuiltinServers.all.size} countries built in", "Community servers verified on your phone before use"),
+            Triple(Icons.Rounded.VerifiedUser, "Nothing fake", "A server is shown as working only after a real HTTPS check"),
+            Triple(Icons.Rounded.VpnKey, "Bring your own", "VLESS, VMess, Trojan, Shadowsocks, Hysteria2, SOCKS5, HTTP"),
+        ),
+    ),
+    Page(
+        "Two independent shields", "Use the VPN, Secure DNS, or both — they work separately.",
+        listOf(
+            Triple(Icons.Rounded.Bolt, "VPN", "Connect a server and your apps' traffic goes through it"),
+            Triple(Icons.Rounded.Dns, "Secure DNS", "Encrypts lookups while no server is connected; pauses while one is"),
+            Triple(Icons.Rounded.Language, "Only my sites", "Route just the websites you choose, keep everything else direct"),
+        ),
+    ),
+    Page(
+        "Before you connect", "Android asks for your consent once.",
+        listOf(
+            Triple(Icons.Rounded.VpnKey, "VPN permission", "Needed for the tunnel — both for servers and for Secure DNS"),
+            Triple(Icons.Rounded.Notifications, "Notifications", "A status notification is required while the tunnel runs"),
+            Triple(Icons.Rounded.Lock, "Honest limits", "TCP only (no UDP games/VoIP), free servers may go away — the app tells you"),
+        ),
+    ),
 )
 
 @Composable
-fun OnboardingScreen(vm: MainViewModel, connect: () -> Unit) {
+fun OnboardingScreen(vm: MainViewModel, onDone: () -> Unit) {
     val c = Tervyn.colors
-    var page by rememberSaveable { mutableIntStateOf(0) }
-    Column(
-        Modifier.fillMaxSize().background(c.backgroundGradient).statusBarsPadding().navigationBarsPadding()
-            .padding(horizontal = Space.gutter).verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (page != 0) { Spacer(Modifier.height(Space.xl)); TervynLogo(72.dp); Spacer(Modifier.height(Space.xl)) }
-        if (page == 0) {
-            WelcomePage(onStart = { page = 1 }, onSkip = { page = pages.size })
-        } else if (page < pages.size) {
-            val p = pages[page]
-            Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
-                AnimatedGlobe(Modifier.fillMaxSize(), active = true)
-                IconBadge(p.icon, c.cyan, 84.dp)
-            }
-            Spacer(Modifier.height(Space.xl))
-            Text(p.title, style = MaterialTheme.typography.headlineSmall, color = c.text, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(Space.s))
-            Text(p.text, style = MaterialTheme.typography.bodyLarge, color = c.text2, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(Space.xl))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(pages.size + 1) { i ->
-                    Box(Modifier.size(if (i == page) 22.dp else 8.dp, 8.dp).clip(CircleShape).background(if (i == page) c.cyan else c.text3))
+    val pager = rememberPagerState { pages.size }
+    val scope = rememberCoroutineScope()
+    fun finish() { vm.updateSettings { it.copy(onboardingDone = true) }; vm.refreshServers(); onDone() }
+    Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.m), verticalAlignment = Alignment.CenterVertically) {
+            BrandMark(36.dp); Spacer(Modifier.width(Space.m))
+            Text("Tervyn", style = MaterialTheme.typography.titleLarge, color = c.text, modifier = Modifier.weight(1f))
+            if (pager.currentPage < pages.lastIndex) GhostButton("Skip", ::finish, color = c.text2)
+        }
+        HorizontalPager(pager, Modifier.weight(1f)) { i ->
+            val p = pages[i]
+            Column(Modifier.fillMaxSize().padding(horizontal = Space.gutter), verticalArrangement = Arrangement.Center) {
+                Text(p.title, style = MaterialTheme.typography.displaySmall, color = c.text)
+                Spacer(Modifier.height(Space.s))
+                Text(p.text, style = MaterialTheme.typography.bodyLarge, color = c.text2)
+                Spacer(Modifier.height(Space.xxl))
+                p.points.forEach { (icon, t, d) ->
+                    Row(Modifier.padding(vertical = Space.m), verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(icon, c.accent2, 48.dp)
+                        Spacer(Modifier.width(Space.l))
+                        Column { Text(t, style = MaterialTheme.typography.titleMedium, color = c.text); Text(d, style = MaterialTheme.typography.bodySmall, color = c.text2) }
+                    }
                 }
             }
-            Spacer(Modifier.height(Space.xl))
-            NeonButton("Continue", { page++ }, Modifier.fillMaxWidth())
-            Spacer(Modifier.height(Space.s))
-            NeonButton("Skip", { page = pages.size }, Modifier.fillMaxWidth(), secondary = true)
-        } else {
-            Text("Before you start", style = MaterialTheme.typography.headlineSmall, color = c.text)
-            Spacer(Modifier.height(Space.l))
-            NotificationCard("Free servers are run by unknown operators",
-                "Free public proxies can be slow, short-lived and untrusted. Tervyn verifies HTTPS certificates, but avoid banking and other sensitive logins over free servers. Use your own servers for anything important.",
-                Tone.WARNING)
-            Spacer(Modifier.height(Space.m))
-            NotificationCard("What Android will ask",
-                "Android shows a one-time VPN connection request. Tervyn also asks to show notifications for the connection status. No other permissions are needed.",
-                Tone.INFO)
-            Spacer(Modifier.height(Space.m))
-            NotificationCard("No tracking", "No account, no ads, no analytics. Settings and connection history stay on this phone.", Tone.SUCCESS)
-            Spacer(Modifier.height(Space.xl))
-            NeonButton("Get started & connect", {
-                vm.updateSettings { it.copy(onboardingDone = true) }
-                connect()
-            }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Shield)
-            Spacer(Modifier.height(Space.s))
-            NeonButton("Explore first", { vm.updateSettings { it.copy(onboardingDone = true) } }, Modifier.fillMaxWidth(), secondary = true)
         }
-        Spacer(Modifier.height(Space.xl))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            repeat(pages.size) { i ->
+                Box(Modifier.padding(4.dp).size(if (i == pager.currentPage) 22.dp else 8.dp, 8.dp).clip(CircleShape).background(if (i == pager.currentPage) c.accent else c.cardHigh))
+            }
+        }
+        Spacer(Modifier.height(Space.l))
+        Row(Modifier.padding(horizontal = Space.gutter, vertical = Space.l), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            if (pager.currentPage == pages.lastIndex) PrimaryButton("Get started", ::finish, Modifier.weight(1f))
+            else PrimaryButton("Continue", { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }, Modifier.weight(1f))
+        }
     }
 }
 
+/** PIN lock shown when app lock is enabled. Biometrics (if enabled) are offered via [onBiometric]. */
 @Composable
 fun LockScreen(vm: MainViewModel, biometricEnabled: Boolean, onBiometric: () -> Unit, onUnlocked: () -> Unit) {
     val c = Tervyn.colors
     var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var attempts by remember { mutableIntStateOf(0) }
+    var error by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (biometricEnabled) onBiometric() }
-    Column(
-        Modifier.fillMaxSize().background(c.backgroundGradient).statusBarsPadding().navigationBarsPadding().padding(Space.gutter),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-    ) {
-        TervynLogo(80.dp)
-        Spacer(Modifier.height(Space.l))
-        IconBadge(Icons.Rounded.Lock, c.cyan, 48.dp)
-        Spacer(Modifier.height(Space.m))
-        Text("Tervyn is locked", style = MaterialTheme.typography.titleLarge, color = c.text)
-        Spacer(Modifier.height(Space.l))
-        ProxyInputField(pin, { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, "PIN", keyboardType = KeyboardType.NumberPassword, secret = true, error = error)
-        Spacer(Modifier.height(Space.m))
-        NeonButton("Unlock", {
-            if (attempts >= 5) { error = "Too many attempts. Wait a moment."; return@NeonButton }
-            if (vm.verifyPin(pin)) onUnlocked() else { attempts++; error = "Wrong PIN"; pin = "" }
-        }, Modifier.fillMaxWidth(), enabled = PinHasher.isValidPin(pin))
-        if (biometricEnabled) {
-            Spacer(Modifier.height(Space.s))
-            NeonButton("Use fingerprint / face", onBiometric, Modifier.fillMaxWidth(), icon = Icons.Rounded.Fingerprint, secondary = true)
+    fun submit() { if (vm.verifyPin(pin)) onUnlocked() else { error = true; pin = "" } }
+    Column(Modifier.fillMaxSize().background(c.bg).statusBarsPadding().navigationBarsPadding().padding(Space.gutter), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        BrandMark(72.dp)
+        Spacer(Modifier.height(Space.xl))
+        Text("Enter your PIN", style = MaterialTheme.typography.headlineSmall, color = c.text)
+        Text(if (error) "Wrong PIN, try again" else "Tervyn is locked", style = MaterialTheme.typography.bodyMedium, color = if (error) c.danger else c.text2)
+        Spacer(Modifier.height(Space.xl))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            repeat(maxOf(4, pin.length)) { i -> Box(Modifier.size(14.dp).clip(CircleShape).background(if (i < pin.length) c.accent else c.cardHigh)) }
         }
-        LaunchedEffect(attempts) { if (attempts >= 5) { delay(30_000); attempts = 0; error = null } }
-        Spacer(Modifier.width(1.dp))
-    }
-}
-
-
-@Composable
-private fun WelcomeFeature(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, sub: String, tint: androidx.compose.ui.graphics.Color, modifier: Modifier) {
-    val c = Tervyn.colors
-    com.tervyn.vpn.ui.components.GlassCard(modifier, padding = androidx.compose.foundation.layout.PaddingValues(Space.m)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconBadge(icon, tint, 44.dp)
-            Spacer(Modifier.width(Space.s))
-            Column {
-                Text(title, color = c.text, style = MaterialTheme.typography.titleSmall)
-                Text(sub, color = c.text2, style = MaterialTheme.typography.labelSmall)
+        Spacer(Modifier.height(Space.xxl))
+        val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", if (biometricEnabled) "bio" else "", "0", "del")
+        keys.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.l), modifier = Modifier.padding(vertical = Space.s)) {
+                row.forEach { k ->
+                    Box(
+                        Modifier.size(72.dp).clip(CircleShape).background(if (k.isEmpty()) c.bg else c.card)
+                            .then(if (k.isEmpty()) Modifier else Modifier.clickable(role = Role.Button) {
+                                error = false
+                                when (k) {
+                                    "del" -> pin = pin.dropLast(1)
+                                    "bio" -> onBiometric()
+                                    else -> if (pin.length < 8) { pin += k; if (pin.length >= 4 && vm.verifyPin(pin)) onUnlocked() }
+                                }
+                            })
+                            .semantics { contentDescription = when (k) { "del" -> "Delete"; "bio" -> "Use biometrics"; else -> k } },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when (k) {
+                            "del" -> Icon(Icons.AutoMirrored.Rounded.Backspace, null, tint = c.text2)
+                            "bio" -> Icon(Icons.Rounded.Fingerprint, null, tint = c.accent2)
+                            "" -> Unit
+                            else -> Text(k, style = MaterialTheme.typography.headlineSmall, color = c.text)
+                        }
+                    }
+                }
             }
         }
-    }
-}
-
-@Composable
-private fun WelcomePage(onStart: () -> Unit, onSkip: () -> Unit) {
-    val c = Tervyn.colors
-    Box(Modifier.fillMaxWidth().aspectRatio(852f / 600f)) {
-        com.tervyn.vpn.ui.components.Art(com.tervyn.vpn.R.drawable.art_welcome, Modifier.fillMaxSize(), androidx.compose.ui.layout.ContentScale.Crop)
-        // Real Skip button placed over the artwork's Skip pill.
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
-            val k = maxWidth / 852f
-            Row(
-                Modifier.offset(x = 676f * k, y = 8f * k).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
-                    .background(androidx.compose.ui.graphics.Color(0xFF0B1638))
-                    .border(1.5.dp, androidx.compose.ui.graphics.Color(0xFF2F4DA0), androidx.compose.foundation.shape.RoundedCornerShape(50))
-                    .clickable(onClick = onSkip).padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) { Text("Skip ›", color = c.text, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
-        }
-    }
-    Text("Welcome to", color = c.text, fontSize = 40.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-    Text(com.tervyn.vpn.ui.components.twoTone("Tervyn VPN", "VPN", c.text, androidx.compose.ui.graphics.Color(0xFF1E88FF)), fontSize = 52.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-    Text("Browse Freely. Stay Secure.", color = androidx.compose.ui.graphics.Color(0xFFB9C7FF), fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-    Spacer(Modifier.height(Space.l))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        repeat(3) { i -> Box(Modifier.size(22.dp).clip(CircleShape).background(if (i == 0) androidx.compose.ui.graphics.Color(0xFF1EA8FF) else androidx.compose.ui.graphics.Color(0xFF1C2A55))) }
-    }
-    Spacer(Modifier.height(Space.l))
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        WelcomeFeature(Icons.Rounded.Bolt, "Ultra Fast Connection", "Fastest server, picked for you", c.blue, Modifier.weight(1f))
-        WelcomeFeature(Icons.Rounded.Shield, "Verified HTTPS Servers", "Every server is tested", c.green, Modifier.weight(1f))
-    }
-    Spacer(Modifier.height(Space.m))
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-        WelcomeFeature(Icons.Rounded.VisibilityOff, "Hide Your IP", "From the sites you visit", c.purple, Modifier.weight(1f))
-        WelcomeFeature(Icons.Rounded.Public, "Access More Content", "Reach blocked sites", c.amber, Modifier.weight(1f))
-    }
-    Spacer(Modifier.height(Space.xl))
-    NeonButton("Get Started  ›", onStart, Modifier.fillMaxWidth().height(68.dp))
-    Spacer(Modifier.height(Space.m))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Rounded.Shield, null, tint = androidx.compose.ui.graphics.Color(0xFF29B6FF))
-        Spacer(Modifier.width(8.dp))
-        Text("Free · No account · No ads", color = c.text2, fontSize = 18.sp)
+        Spacer(Modifier.height(Space.xl))
+        SecondaryButton("Unlock", ::submit, Modifier.fillMaxWidth(), enabled = pin.length >= 4)
+        @Suppress("unused") val align = TextAlign.Center
     }
 }

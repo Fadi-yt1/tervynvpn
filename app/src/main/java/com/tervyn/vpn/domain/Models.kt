@@ -27,24 +27,18 @@ data class ProxyEndpoint(
         "${protocol.name.lowercase()}://${if (hasAuth) "$username:***@" else ""}$host:$port"
 }
 
-/** Where a server came from. Used to filter the pool according to the user's Server Source. */
+/** Where a server came from. */
 @Serializable
-enum class ServerOrigin { FREE_PUBLIC, PROXIO, CUSTOM, INTEGRATION, LIST_FILE, SUBSCRIPTION, TERVYN_FAST, TERVYN_ALL }
-
-/** User-selectable server source (Settings -> Server Source). */
-@Serializable
-enum class SourceMode(val label: String, val origins: Set<ServerOrigin>) {
-    TERVYN_FAST("Tervyn Fastest servers", setOf(ServerOrigin.TERVYN_FAST)),
-    TERVYN_ALL("Tervyn All servers", setOf(ServerOrigin.TERVYN_FAST, ServerOrigin.TERVYN_ALL)),
-    FREE("Free public servers", setOf(ServerOrigin.FREE_PUBLIC)),
-    PROXIO("Proxio.io servers", setOf(ServerOrigin.PROXIO)),
-    PROXIO_PLUS_FREE("Proxio.io + free servers", setOf(ServerOrigin.PROXIO, ServerOrigin.FREE_PUBLIC)),
-    OWN("Your own servers", setOf(ServerOrigin.CUSTOM, ServerOrigin.SUBSCRIPTION)),
-    INTEGRATION("Proxy integration", setOf(ServerOrigin.INTEGRATION)),
-    LIST_FILE("Proxy list (.txt file)", setOf(ServerOrigin.LIST_FILE));
+enum class ServerOrigin {
+    /** One of the servers shipped with the app (one per country). */
+    BUILTIN,
+    /** Added by the user (share link, manual proxy). */
+    CUSTOM,
+    /** Loaded from a subscription URL the user added. */
+    SUBSCRIPTION,
 }
 
-enum class VpnMode(val label: String) { ALL_APPS("All Apps"), ONLY_MY_SITES("Only My Sites") }
+enum class VpnMode(val label: String) { ALL_APPS("All apps"), ONLY_MY_SITES("Only my sites") }
 
 /**
  * A server the user can connect to. Either a plain [endpoint] (HTTP/SOCKS5) or an Xray share link
@@ -61,6 +55,8 @@ data class Server(
     val subscriptionId: Long? = null,
     /** Country of the verified exit IP (ISO-3166 alpha-2) — null until a test succeeded. */
     val countryCode: String? = null,
+    /** Country announced by the provider/list (ISO-3166 alpha-2). Shown until the exit country is verified. */
+    val declaredCountry: String? = null,
     val exitIp: String? = null,
     val latencyMs: Int? = null,
     val alive: Boolean = false,
@@ -71,7 +67,12 @@ data class Server(
     val addedAt: Long = System.currentTimeMillis(),
 ) {
     val isXray: Boolean get() = xrayLink != null
+    val isBuiltin: Boolean get() = origin == ServerOrigin.BUILTIN
     val verified: Boolean get() = alive && lastChecked > 0
+    /** Best known country: the verified exit country, else the declared one. */
+    val displayCountry: String? get() = countryCode ?: declaredCountry
+    /** The verified exit country differs from what the provider declared. */
+    val countryMismatch: Boolean get() = countryCode != null && declaredCountry != null && countryCode != declaredCountry
 }
 
 /** Result of testing a server through the HTTPS trace endpoint. */

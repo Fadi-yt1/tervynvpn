@@ -1,6 +1,8 @@
 package com.tervyn.vpn.ui.theme
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -10,32 +12,38 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tervyn.vpn.R
 import com.tervyn.vpn.data.AppTheme
 
-/** Centralised design tokens for Tervyn. */
+/**
+ * Tervyn design tokens. One accent (electric blue → cyan), semantic colours for state, three neutral
+ * surface levels. Everything in the UI reads from here — no ad-hoc colours in screens.
+ */
 @Immutable
 data class TervynColors(
-    val bg: Color = Color(0xFF030817),
-    val bg2: Color = Color(0xFF07132D),
-    val card: Color = Color(0xFF0B1735),
-    val cardBorder: Color = Color(0x3329A3FF),
-    val blue: Color = Color(0xFF086BFF),
-    val cyan: Color = Color(0xFF00E5FF),
-    val purple: Color = Color(0xFFA100FF),
-    val green: Color = Color(0xFF00E58A),
-    val amber: Color = Color(0xFFFFC23D),
-    val red: Color = Color(0xFFFF4D6A),
-    val text: Color = Color(0xFFFFFFFF),
-    val text2: Color = Color(0xFFAFC5E8),
-    val text3: Color = Color(0xFF6F86AD),
+    val bg: Color = Color(0xFF070B16),
+    val surface: Color = Color(0xFF0D1424),
+    val card: Color = Color(0xFF111A2E),
+    val cardHigh: Color = Color(0xFF182440),
+    val border: Color = Color(0x1AFFFFFF),
+    val borderStrong: Color = Color(0x33FFFFFF),
+    val accent: Color = Color(0xFF3D7BFF),
+    val accent2: Color = Color(0xFF22D3EE),
+    val success: Color = Color(0xFF2EE59D),
+    val warning: Color = Color(0xFFF5B544),
+    val danger: Color = Color(0xFFFF5C7A),
+    val text: Color = Color(0xFFF3F6FC),
+    val text2: Color = Color(0xFFA7B4CC),
+    val text3: Color = Color(0xFF66738F),
+    val onAccent: Color = Color(0xFFFFFFFF),
 ) {
-    val primaryGradient get() = Brush.horizontalGradient(listOf(blue, Color(0xFF3B5BFF), purple))
-    val neonGradient get() = Brush.linearGradient(listOf(cyan, blue, purple))
-    val backgroundGradient get() = Brush.verticalGradient(listOf(bg2, bg, bg))
+    val accentGradient get() = Brush.linearGradient(listOf(accent, accent2))
+    val accentSoft get() = accent.copy(alpha = 0.14f)
 }
 
 object Space {
@@ -45,9 +53,14 @@ object Space {
     val l = 16.dp
     val xl = 24.dp
     val xxl = 32.dp
-    val gutter = 16.dp
-    val radius = 20.dp
-    val radiusSmall = 14.dp
+    val gutter = 20.dp
+}
+
+object Radius {
+    val s = 10.dp
+    val m = 16.dp
+    val l = 22.dp
+    val xl = 28.dp
 }
 
 val LocalTervynColors = staticCompositionLocalOf { TervynColors() }
@@ -56,36 +69,61 @@ object Tervyn {
     val colors: TervynColors @Composable get() = LocalTervynColors.current
 }
 
-private val typography = Typography(
-    displaySmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold, fontSize = 30.sp, letterSpacing = (-0.5).sp),
-    headlineSmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold, fontSize = 24.sp),
-    titleLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 20.sp),
-    titleMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 16.sp),
-    titleSmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 14.sp),
-    bodyLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 16.sp, lineHeight = 22.sp),
-    bodyMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 14.sp, lineHeight = 20.sp),
-    bodySmall = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 12.sp, lineHeight = 16.sp),
-    labelLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 15.sp),
-    labelMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium, fontSize = 13.sp),
-    labelSmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium, fontSize = 11.sp),
+val Manrope = FontFamily(
+    Font(R.font.manrope_regular, FontWeight.Normal),
+    Font(R.font.manrope_medium, FontWeight.Medium),
+    Font(R.font.manrope_semibold, FontWeight.SemiBold),
+    Font(R.font.manrope_bold, FontWeight.Bold),
+    Font(R.font.manrope_extrabold, FontWeight.ExtraBold),
+)
+
+private fun t(size: Int, weight: FontWeight, lineHeight: Int = (size * 1.35).toInt(), letterSpacing: Float = 0f) =
+    TextStyle(fontFamily = Manrope, fontWeight = weight, fontSize = size.sp, lineHeight = lineHeight.sp, letterSpacing = letterSpacing.sp)
+
+val TervynTypography = Typography(
+    displayLarge = t(44, FontWeight.ExtraBold, 48, -1f),
+    displayMedium = t(34, FontWeight.ExtraBold, 40, -0.8f),
+    displaySmall = t(28, FontWeight.Bold, 34, -0.5f),
+    headlineLarge = t(26, FontWeight.Bold, 32, -0.4f),
+    headlineMedium = t(22, FontWeight.Bold, 28, -0.3f),
+    headlineSmall = t(20, FontWeight.Bold, 26, -0.2f),
+    titleLarge = t(18, FontWeight.Bold, 24),
+    titleMedium = t(16, FontWeight.SemiBold, 22),
+    titleSmall = t(14, FontWeight.SemiBold, 20),
+    bodyLarge = t(16, FontWeight.Normal, 24),
+    bodyMedium = t(14, FontWeight.Normal, 21),
+    bodySmall = t(12, FontWeight.Normal, 17),
+    labelLarge = t(15, FontWeight.SemiBold, 20),
+    labelMedium = t(13, FontWeight.SemiBold, 18),
+    labelSmall = t(11, FontWeight.Medium, 15, 0.3f),
+)
+
+val TervynShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(Radius.s),
+    medium = RoundedCornerShape(Radius.m),
+    large = RoundedCornerShape(Radius.l),
+    extraLarge = RoundedCornerShape(Radius.xl),
 )
 
 fun colorsFor(theme: AppTheme) = when (theme) {
     AppTheme.MIDNIGHT -> TervynColors()
-    AppTheme.AMOLED -> TervynColors(bg = Color(0xFF000000), bg2 = Color(0xFF02060F), card = Color(0xFF070E20))
-    AppTheme.DEEP_BLUE -> TervynColors(bg = Color(0xFF041029), bg2 = Color(0xFF0A1F4A), card = Color(0xFF0E2350))
+    AppTheme.AMOLED -> TervynColors(bg = Color(0xFF000000), surface = Color(0xFF07090F), card = Color(0xFF0E1119), cardHigh = Color(0xFF161B27))
+    AppTheme.OCEAN -> TervynColors(bg = Color(0xFF051226), surface = Color(0xFF0A1B38), card = Color(0xFF0F244A), cardHigh = Color(0xFF17305E), accent = Color(0xFF4D8DFF))
 }
 
 @Composable
 fun TervynTheme(theme: AppTheme = AppTheme.MIDNIGHT, content: @Composable () -> Unit) {
     val c = colorsFor(theme)
     val scheme = darkColorScheme(
-        primary = c.blue, onPrimary = Color.White, secondary = c.cyan, tertiary = c.purple,
-        background = c.bg, onBackground = c.text, surface = c.card, onSurface = c.text,
-        surfaceVariant = c.bg2, onSurfaceVariant = c.text2, error = c.red, outline = c.cardBorder,
-        surfaceContainer = c.card, surfaceContainerHigh = c.bg2, surfaceContainerHighest = c.bg2,
+        primary = c.accent, onPrimary = c.onAccent, primaryContainer = c.accentSoft, onPrimaryContainer = c.text,
+        secondary = c.accent2, onSecondary = Color.Black, tertiary = c.success,
+        background = c.bg, onBackground = c.text, surface = c.surface, onSurface = c.text,
+        surfaceVariant = c.card, onSurfaceVariant = c.text2, error = c.danger, onError = Color.White, outline = c.borderStrong, outlineVariant = c.border,
+        surfaceContainer = c.card, surfaceContainerLow = c.surface, surfaceContainerHigh = c.cardHigh, surfaceContainerHighest = c.cardHigh,
+        inverseSurface = c.text, inverseOnSurface = c.bg, scrim = Color.Black,
     )
     CompositionLocalProvider(LocalTervynColors provides c) {
-        MaterialTheme(colorScheme = scheme, typography = typography, content = content)
+        MaterialTheme(colorScheme = scheme, typography = TervynTypography, shapes = TervynShapes, content = content)
     }
 }

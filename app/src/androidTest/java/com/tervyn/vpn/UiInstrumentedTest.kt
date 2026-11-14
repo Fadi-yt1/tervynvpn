@@ -19,7 +19,7 @@ class UiInstrumentedTest {
         rule.mainClock.advanceTimeBy(3000)
         rule.waitUntil(10_000) {
             rule.mainClock.advanceTimeBy(100)
-            rule.onAllNodesWithText("Tap to Connect").fetchSemanticsNodes().isNotEmpty() ||
+            rule.onAllNodesWithText("Not connected").fetchSemanticsNodes().isNotEmpty() ||
                 rule.onAllNodesWithText("Skip").fetchSemanticsNodes().isNotEmpty()
         }
         if (rule.onAllNodesWithText("Skip").fetchSemanticsNodes().isNotEmpty()) {

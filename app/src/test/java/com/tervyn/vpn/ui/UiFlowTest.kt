@@ -11,13 +11,15 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tervyn.vpn.MainActivity
 import com.tervyn.vpn.TervynApp
+import com.tervyn.vpn.core.BuiltinServers
+import com.tervyn.vpn.domain.ServerOrigin
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -55,94 +57,105 @@ class UiFlowTest {
 
     private fun onboard() {
         rule.mainClock.autoAdvance = false
-        advance(2500) // animated splash
         // DataStore's delegate is process-wide, so a previous test in this JVM may already have onboarded.
         rule.waitUntil(10_000) {
             advance(100)
-            rule.onAllNodesWithText("Welcome to").fetchSemanticsNodes().isNotEmpty() ||
-                rule.onAllNodesWithText("Tap to Connect").fetchSemanticsNodes().isNotEmpty()
+            rule.onAllNodesWithText("Private browsing", substring = true).fetchSemanticsNodes().isNotEmpty() ||
+                rule.onAllNodesWithText("Not connected").fetchSemanticsNodes().isNotEmpty()
         }
-        if (rule.onAllNodesWithText("Tap to Connect").fetchSemanticsNodes().isNotEmpty()) return
+        if (rule.onAllNodesWithText("Not connected").fetchSemanticsNodes().isNotEmpty()) return
         shot("01_onboarding")
-        rule.onNodeWithText("Skip", substring = true).performClick(); advance()
-        waitText("Before you start")
-        shot("02_onboarding_warning")
-        rule.onNodeWithText("Explore first").performClick(); advance()
-        waitText("Tap to Connect")
+        rule.onNodeWithText("Skip").performClick(); advance()
+        waitText("Not connected")
     }
 
     @Test fun onboardingThenHome() {
         onboard()
-        rule.onNodeWithText("Fastest Available").assertIsDisplayed()
         rule.onNodeWithContentDescription("Connect").assertIsDisplayed()
-        shot("03_home")
+        rule.onNodeWithText("Fastest available").assertIsDisplayed()
+        rule.onNodeWithText("Secure DNS").assertIsDisplayed()
+        shot("02_home")
         assertTrue(runBlocking { app.container.settings.current().onboardingDone })
     }
 
-    @Test fun tabsAndScreensAreReachable() {
+    @Test fun builtinServersAreInstalledAndListed() {
         onboard()
+        rule.waitUntil(10_000) { advance(100); runBlocking { app.container.servers.count(ServerOrigin.BUILTIN) } == BuiltinServers.all.size }
         rule.onNodeWithText("Servers").performClick(); advance()
-        waitText("Choose a country or use the fastest server")
-        shot("04_servers")
-        rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performClick(); advance()
-        waitText("App Presets")
-        shot("05_sites")
-        rule.onNodeWithText("Settings").performClick(); advance()
-        waitText("VPN Preferences")
-        shot("06_settings")
-        rule.onNodeWithText("Servers").performClick(); advance()
-        waitText("Source")
-        rule.onNodeWithText("Source").performClick(); advance()
-        waitText("Tervyn server lists")
-        shot("07_sources")
+        waitText("Built-in · ${BuiltinServers.all.size} countries".uppercase())
+        waitText("Germany")
+        shot("03_servers")
+        // Selecting a server turns auto-switch off; "Fastest available" turns it back on.
+        rule.onNodeWithText("Germany").performClick(); advance()
+        rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current() }.selectedServerId == "b_de" }
+        assertFalse(runBlocking { app.container.settings.current().autoSwitch })
+        rule.onNodeWithText("Fastest available").performClick(); advance()
+        rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current() }.autoSwitch }
+        rule.onNodeWithContentDescription("Details of Germany").performClick(); advance()
+        waitText("Verified exit country")
+        shot("04_server_detail")
+    }
+
+    @Test fun secureDnsToggleIsIndependentOfServerSelection() {
+        onboard()
+        rule.onNodeWithText("Secure DNS").performClick(); advance()
+        waitText("Encrypts every DNS lookup")
+        shot("05_dns")
+        rule.onNodeWithContentDescription("Google (8.8.8.8)", substring = true).performClick(); advance()
+        rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current() }.dohUrl == "https://8.8.8.8/dns-query" }
+        // The setting flips without touching the server selection (no VPN consent exists in Robolectric, so no tunnel starts).
+        runBlocking { app.container.controller.setSecureDns(true) }
+        rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current() }.secureDns }
+        assertTrue(runBlocking { app.container.settings.current() }.autoSwitch)
+        runBlocking { app.container.controller.setSecureDns(false) }
+        rule.waitUntil(10_000) { advance(100); !runBlocking { app.container.settings.current() }.secureDns }
     }
 
     @Test fun addWebsiteAndSwitchMode() {
         onboard()
-        rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performClick(); advance()
-        waitText("Add Website")
-        rule.onNodeWithText("Add Website").performClick(); advance()
-        waitText("Website (e.g.")
-        rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("https://www.Example.org/some/page?x=1")
-        rule.onNodeWithText("Add").performClick(); advance()
+        rule.onNodeWithText("Settings").performClick(); advance()
+        waitText("Routing mode")
+        shot("06_settings")
+        rule.onNodeWithText("Routing mode").performClick(); advance()
+        waitText("Add a website".uppercase())
+        rule.onNode(hasText("Website")).performTextInput("https://www.Example.org/some/page?x=1")
+        rule.onNodeWithContentDescription("Add website").performClick(); advance()
+        assertTrue("view model must use this Application's container", rule.activity.vm.c === app.container)
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.domains.all() }.any { it.domain == "example.org" } }
         waitText("example.org")
-        rule.onNodeWithContentDescription("Only My Sites mode").performClick(); advance()
+        rule.onNodeWithContentDescription("Only my sites").performClick(); advance()
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.settings.current().mode.name } == "ONLY_MY_SITES" }
-        shot("08_sites_added")
-        // Preset toggle adds all of a service's domains
         rule.onNodeWithContentDescription("YouTube").performClick(); advance()
         rule.waitUntil(10_000) { advance(100); runBlocking { app.container.domains.all() }.any { it.domain == "googlevideo.com" } }
+        shot("07_sites")
     }
 
     @Test fun invalidWebsiteIsRejected() {
         onboard()
-        rule.onNodeWithText("Home").performClick(); advance()
-        rule.onNodeWithText("See All").performClick(); advance()
-        waitText("Add Website")
-        rule.onNodeWithText("Add Website").performClick(); advance()
-        waitText("Website (e.g.")
-        rule.onNode(hasText("Website (e.g. example.com or a link)")).performTextInput("javascript:alert(1)")
-        rule.onNodeWithText("Add").performClick(); advance()
+        rule.onNodeWithText("Settings").performClick(); advance()
+        waitText("Routing mode")
+        rule.onNodeWithText("Routing mode").performClick(); advance()
+        waitText("Add a website".uppercase())
+        val before = runBlocking { app.container.domains.all() }.size
+        rule.onNode(hasText("Website")).performTextInput("javascript:alert(1)")
+        rule.onNodeWithContentDescription("Add website").performClick(); advance()
         waitText("Not a valid website")
-        assertEquals(0, runBlocking { app.container.domains.all() }.size)
+        assertEquals(before, runBlocking { app.container.domains.all() }.size)
     }
 
-    @Test fun addCustomProxyFormValidates() {
+    @Test fun addServerValidatesLinks() {
         onboard()
         rule.onNodeWithText("Servers").performClick(); advance()
-        waitText("Add server")
-        rule.onNodeWithText("Add server").performClick(); advance()
-        waitText("Choose the protocol")
-        shot("09_protocols")
-        rule.onNodeWithText("SOCKS5").performClick(); advance()
-        rule.onNodeWithText("Continue").performClick(); advance()
-        waitText("Enter your proxy details")
-        rule.onNode(hasText("Server Address")).performTextInput("bad host!")
+        rule.onNodeWithContentDescription("Add server").performClick(); advance()
+        waitText("Paste one or more share links")
+        rule.onNode(hasText("Link or subscription URL")).performTextInput("vless://not-a-valid-link")
+        advance()
+        rule.waitUntil(10_000) { advance(100); rule.onAllNodesWithText("Add and test").fetchSemanticsNodes().isNotEmpty() }
+        shot("08_add_server")
+        rule.onNodeWithText("Show").performClick(); advance()
+        waitText("Server address")
+        rule.onNode(hasText("Server address")).performTextInput("bad host!")
         advance()
         waitText("Invalid host")
-        shot("10_add_proxy")
     }
 }

@@ -11,7 +11,7 @@ import org.junit.Test
 class RankingTest {
     private val now = 10_000_000L
     private fun srv(id: String, ms: Int?, alive: Boolean = true, cc: String? = "US", fails: Int = 0, fav: Boolean = false) =
-        Server(id, id, "SOCKS5", origin = ServerOrigin.FREE_PUBLIC, latencyMs = ms, alive = alive, countryCode = cc, lastChecked = now, failCount = fails, favorite = fav)
+        Server(id, id, "SOCKS5", origin = ServerOrigin.CUSTOM, latencyMs = ms, alive = alive, countryCode = cc, lastChecked = now, failCount = fails, favorite = fav)
 
     @Test fun ranksByLatencyAndPenalties() {
         val r = Ranking.rank(listOf(srv("a", 300), srv("b", 100), srv("c", 50, alive = false), srv("d", 90, fails = 1), srv("e", null)), now = now)

@@ -2,21 +2,18 @@ package com.tervyn.vpn.core
 
 import android.content.Context
 import com.tervyn.vpn.data.AppSettings
-import com.tervyn.vpn.data.SecureStore
 import com.tervyn.vpn.data.ServerRepository
 import com.tervyn.vpn.data.SettingsRepository
 import com.tervyn.vpn.domain.ProxyEndpoint
-import com.tervyn.vpn.domain.ProxyProtocol
 import com.tervyn.vpn.domain.Server
 import com.tervyn.vpn.domain.ServerOrigin
 import com.tervyn.vpn.domain.TestResult
 import com.tervyn.vpn.net.HttpsOverProxy
 import com.tervyn.vpn.net.ProxyTester
+import com.tervyn.vpn.utils.Format
 import com.tervyn.vpn.xray.XrayManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,22 +27,22 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Server discovery, testing, ranking and selection.
+ * Server pool, testing, ranking and selection.
  *
  * Nothing is marked available until it passed an HTTPS test with certificate validation through the
- * proxy; countries come only from the verified exit IP (Cloudflare `loc`), never guessed.
+ * server; countries shown as *verified* come only from the exit IP (Cloudflare `loc`), never guessed.
  */
 class ServerManager(
-    private val context: Context,
+    context: Context,
     private val settingsRepo: SettingsRepository,
     private val servers: ServerRepository,
     private val http: OkHttpClient,
     private val xray: XrayManager,
-    private val proxio: ProxioClient,
-    private val secureStore: SecureStore,
 ) {
     data class Progress(
         val phase: String = "",
@@ -58,108 +55,60 @@ class ServerManager(
 
     private val _progress = MutableStateFlow(Progress())
     val progress: StateFlow<Progress> = _progress.asStateFlow()
-    private val refreshLock = Mutex()
-    @Volatile var lastListRefresh = 0L; private set
+    private val prefs = context.getSharedPreferences("tervyn_servers", Context.MODE_PRIVATE)
+    private val installLock = Mutex()
+    private val replaceLock = Mutex()
 
-    fun tester(s: AppSettings) = ProxyTester(HttpsOverProxy(), s.traceUrl, s.testTimeoutMs)
+    fun tester() = ProxyTester(HttpsOverProxy(), ProxyTester.DEFAULT_TRACE_URL, Tuning.TEST_TIMEOUT_MS)
 
-    // ---- discovery -------------------------------------------------------------------------
+    // ---- built-in servers ------------------------------------------------------------------
 
-    /** Downloads all enabled free proxy lists, de-duplicates and stores new candidates. Returns candidate count. */
-    suspend fun refreshFreeLists(s: AppSettings, perSourceCap: Int = 250): Int = refreshLock.withLock {
-        _progress.value = Progress("Fetching proxy lists", running = true)
-        val urls = s.enabledSources
-        val fetched = AtomicInteger()
-        val lists = coroutineScope {
-            urls.map { url ->
-                async(Dispatchers.IO) {
-                    val proto = ProxySources.DEFAULT.firstOrNull { it.url == url }?.protocol ?: ProxySources.guessProtocol(url)
-                    val body = runCatching {
-                        http.newCall(Request.Builder().url(url).header("User-Agent", "TervynVPN/1.0").build()).execute().use { r ->
-                            if (r.isSuccessful) r.body.string().take(3_000_000) else null
-                        }
-                    }.getOrNull()
-                    _progress.value = _progress.value.copy(tested = fetched.incrementAndGet(), total = urls.size, message = "Lists downloaded")
-                    body?.let { ProxyList.parse(it, proto).proxies.shuffled().take(perSourceCap) } ?: emptyList()
-                }
-            }.awaitAll()
+    /** Installs the shipped servers on first launch and refreshes them when the app's table changes. */
+    suspend fun ensureBuiltin() = installLock.withLock {
+        val version = BuiltinServers.VERSION
+        if (prefs.getInt("builtin_version", -1) == version && servers.count(ServerOrigin.BUILTIN) == BuiltinServers.all.size) return@withLock
+        val fresh = BuiltinServers.all.mapIndexedNotNull { i, b ->
+            runCatching { servers.builtinServer(b.countryCode, b.link, Links.parse(b.link), i) }.getOrNull()
         }
-        val unique = LinkedHashMap<String, ProxyEndpoint>()
-        lists.flatten().forEach { unique.putIfAbsent(it.key, it) }
-        servers.pruneFree()
-        val existing = servers.byOrigins(setOf(ServerOrigin.FREE_PUBLIC)).associateBy { it.id }
-        val fresh = unique.values.map { servers.endpointServer(it, ServerOrigin.FREE_PUBLIC) }.filter { it.id !in existing }
-        servers.save(fresh)
-        lastListRefresh = System.currentTimeMillis()
-        val sourcesOk = lists.count { it.isNotEmpty() }
-        _progress.value = Progress("Lists updated", running = false, message = "$sourcesOk/${urls.size} sources, ${unique.size} proxies")
-        unique.size
+        servers.installBuiltin(fresh)
+        prefs.edit().putInt("builtin_version", version).apply()
     }
 
-    /** Loads servers from Proxio.io when a key is configured. */
-    suspend fun refreshProxio(s: AppSettings): Int {
-        val key = secureStore.proxioKey() ?: return 0
-        val protos = when (s.proxioProtocol) {
-            "http" -> listOf(ProxyProtocol.HTTP)
-            "both" -> listOf(ProxyProtocol.SOCKS5, ProxyProtocol.HTTP)
-            else -> listOf(ProxyProtocol.SOCKS5)
+    /**
+     * Free servers come and go. For every built-in slot that failed its last test, fetch the Tervyn lists and
+     * try candidates of the same country until one passes verification; that link then takes over the slot.
+     * Returns the number of slots repaired.
+     */
+    suspend fun replaceDeadBuiltins(force: Boolean = false): Int = replaceLock.withLock {
+        val dead = servers.byOrigins(setOf(ServerOrigin.BUILTIN)).filter { force || (!it.alive && it.lastChecked > 0) }
+        if (dead.isEmpty()) return@withLock 0
+        _progress.value = Progress("Looking for replacement servers", running = true)
+        val candidates = runCatching { BuiltinUpdater.fetchCandidates(http) }.getOrElse {
+            _progress.value = Progress("Server list unavailable", running = false, message = it.message); return@withLock 0
         }
-        val eps = protos.flatMap { proxio.fetch(key, it, if (protos.size == 2) maxOf(1, s.proxioLimit / 2) else s.proxioLimit) }
-        servers.deleteOrigin(ServerOrigin.PROXIO)
-        servers.save(eps.map { servers.endpointServer(it, ServerOrigin.PROXIO, "Proxio ${it.host}") })
-        return eps.size
-    }
-
-    // ---- built-in Tervyn server lists ---------------------------------------------------------
-
-    data class BuiltinStatus(val usable: Int = 0, val skipped: Map<String, Int> = emptyMap(), val updatedAt: Long = 0, val error: String? = null) {
-        val skippedTotal get() = skipped.values.sum()
-    }
-
-    private val _builtin = MutableStateFlow(mapOf<ServerOrigin, BuiltinStatus>())
-    val builtinStatus: StateFlow<Map<ServerOrigin, BuiltinStatus>> = _builtin.asStateFlow()
-    private val builtinPrefs = context.getSharedPreferences("tervyn_builtin", Context.MODE_PRIVATE)
-
-    fun builtinUpdatedAt(origin: ServerOrigin) = builtinPrefs.getLong("updated_${origin.name}", 0L)
-
-    /** Downloads one of the built-in subscriptions and stores its servers (provider order is preserved). */
-    suspend fun refreshBuiltin(origin: ServerOrigin): BuiltinStatus = withContext(Dispatchers.IO) {
-        val url = BuiltinServers.urlFor(origin)
-        _progress.value = Progress("Downloading ${BuiltinServers.labelFor(origin)}", running = true)
-        try {
-            val body = http.newCall(Request.Builder().url(url).header("User-Agent", "TervynVPN/1.0").build()).execute().use { r ->
-                if (!r.isSuccessful) throw java.io.IOException("Server list returned HTTP ${r.code}")
-                r.body.string().also { if (it.length > 8_000_000) throw java.io.IOException("Server list too large") }
-            }
-            val sub = Links.parseSubscription(body)
-            if (sub.links.isEmpty()) throw java.io.IOException("The server list contained no usable servers")
-            val base = System.currentTimeMillis()
-            val fresh = sub.links.mapIndexed { i, (link, o) -> servers.linkServer(link, o, origin, addedAt = base + i) }
-            servers.replaceOrigin(origin, fresh)
-            builtinPrefs.edit().putLong("updated_${origin.name}", System.currentTimeMillis())
-                .putInt("interval_${origin.name}", sub.updateIntervalHours ?: 1).apply()
-            BuiltinStatus(sub.links.size, sub.skipped, System.currentTimeMillis())
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            BuiltinStatus(error = e.message ?: "Download failed", updatedAt = builtinUpdatedAt(origin))
-        }.also { st ->
-            _builtin.value = _builtin.value + (origin to st)
-            _progress.value = Progress(if (st.error == null) "Server list updated" else "Server list update failed", running = false, message = st.error)
+        var repaired = 0
+        for (slot in dead) {
+            val cc = slot.declaredCountry ?: continue
+            val options = candidates[cc].orEmpty().filter { it.first.substringBefore('#') != slot.xrayLink?.substringBefore('#') }.take(6)
+            if (options.isEmpty()) continue
+            val probes = options.map { (link, o) -> servers.linkServer(link, o, ServerOrigin.BUILTIN) }
+            // Probe without touching the database: results are evaluated here, not recorded per candidate.
+            val res = probe(probes, "Testing ${Format.countryName(cc)} servers")
+            val winner = res.filter { it.second.ok }.minByOrNull { it.second.latencyMs } ?: continue
+            val link = options.first { (l, _) -> ServerRepository.idForLink(l) == winner.first.id }
+            servers.replaceBuiltinLink(slot.id, link.first, link.second)
+            servers.recordTest(slot.id, winner.second)
+            repaired++
         }
-    }
-
-    /** True when the built-in list has never been downloaded or is older than its advertised update interval. */
-    fun builtinStale(origin: ServerOrigin): Boolean {
-        val hours = builtinPrefs.getInt("interval_${origin.name}", 1).coerceIn(1, 48)
-        return System.currentTimeMillis() - builtinUpdatedAt(origin) > hours * 3_600_000L
+        _progress.value = Progress(if (repaired > 0) "Replaced $repaired server${if (repaired == 1) "" else "s"}" else "No replacement found", running = false)
+        repaired
     }
 
     // ---- testing ---------------------------------------------------------------------------
 
-    /** Tests a single server (starting a temporary Xray instance for share-link servers). */
-    suspend fun testServer(server: Server, s: AppSettings? = null): TestResult {
-        val settings = s ?: settingsRepo.current()
-        val t = tester(settings)
+    /** Tests a single server (starting a temporary Xray instance for share-link servers) and records the result. */
+    suspend fun testServer(server: Server): TestResult {
+        val t = tester()
         val result = try {
             if (server.isXray) {
                 if (!xray.available) TestResult(false, error = "Xray is not available on this device")
@@ -174,31 +123,43 @@ class ServerManager(
         return result
     }
 
+    /** Like [testMany] but never writes results to the database (used for replacement candidates). */
+    private suspend fun probe(list: List<Server>, phase: String): List<Pair<Server, TestResult>> =
+        testMany(list, phase, overallTimeoutMs = 60_000, record = false)
+
     /**
      * Tests [list] with bounded concurrency. When [stopAfterGood] is set, returns early once that many
-     * working servers were found and either all finished or [graceMs] passed since the first success —
-     * so we pick the *fastest* of several, not just the first responder.
+     * working servers were found and [graceMs] passed since the first success — so we pick the *fastest*
+     * of several, not just the first responder.
      */
     suspend fun testMany(
         list: List<Server>,
-        s: AppSettings,
         phase: String = "Testing servers",
         stopAfterGood: Int? = null,
         graceMs: Long = 4_000,
         overallTimeoutMs: Long = 120_000,
+        concurrency: Int = Tuning.TEST_CONCURRENCY,
+        record: Boolean = true,
     ): List<Pair<Server, TestResult>> {
         if (list.isEmpty()) return emptyList()
         val results = java.util.Collections.synchronizedList(mutableListOf<Pair<Server, TestResult>>())
         val tested = AtomicInteger()
         val good = AtomicInteger()
-        val firstGoodAt = java.util.concurrent.atomic.AtomicLong(0)
+        val firstGoodAt = AtomicLong(0)
         _progress.value = Progress(phase, 0, list.size, 0, running = true)
-        val sem = Semaphore(s.testConcurrency.coerceIn(1, 128))
-        val t = tester(s)
+        val sem = Semaphore(concurrency.coerceIn(1, 128))
+        val t = tester()
 
         // Share-link servers are tested through one batched Xray process (one local SOCKS5 port per server).
         val xrayServers = if (xray.available) list.filter { it.isXray } else emptyList()
         val parsed = xrayServers.mapNotNull { srv -> runCatching { srv to Links.parse(srv.xrayLink!!) }.getOrNull() }
+
+        suspend fun one(srv: Server, ep: ProxyEndpoint?, viaBatch: Boolean): TestResult = when {
+            viaBatch -> if (ep == null) TestResult(false, error = "Xray could not start this server") else t.test(ep)
+            srv.isXray -> if (!xray.available) TestResult(false, error = "Xray is not available on this device")
+                else runCatching { xray.withTemporary(Links.parse(srv.xrayLink!!)) { e -> t.test(e) } }.getOrElse { TestResult(false, error = it.message ?: "failed") }
+            else -> t.test(srv.endpoint)
+        }
 
         suspend fun runAll(xrayEndpoints: Map<String, ProxyEndpoint?>) = coroutineScope {
             val jobs = list.map { srv ->
@@ -206,25 +167,19 @@ class ServerManager(
                     sem.withPermit {
                         if (stopAfterGood != null && good.get() >= stopAfterGood &&
                             firstGoodAt.get() > 0 && System.currentTimeMillis() - firstGoodAt.get() > graceMs) return@withPermit
-                        val r = if (srv.id in xrayEndpoints) {
-                            val ep = xrayEndpoints[srv.id]
-                            (if (ep == null) TestResult(false, error = "Xray could not start this server") else t.test(ep))
-                                .also { servers.recordTest(srv.id, it) }
-                        } else testServer(srv, s)
+                        val r = one(srv, xrayEndpoints[srv.id], srv.id in xrayEndpoints)
+                        if (record) servers.recordTest(srv.id, r)
                         results += srv to r
-                        if (r.ok) { if (good.incrementAndGet() == 1) firstGoodAt.set(System.currentTimeMillis()) }
+                        if (r.ok && good.incrementAndGet() == 1) firstGoodAt.set(System.currentTimeMillis())
                         _progress.value = Progress(phase, tested.incrementAndGet(), list.size, good.get(), running = true)
                     }
                 }
             }
             if (stopAfterGood != null) {
-                // Watchdog: once enough good servers were found and the grace period elapsed, cancel the rest.
                 launch {
                     while (jobs.any { it.isActive }) {
                         kotlinx.coroutines.delay(250)
-                        if (good.get() >= stopAfterGood && System.currentTimeMillis() - firstGoodAt.get() > graceMs) {
-                            jobs.forEach { it.cancel() }
-                        }
+                        if (good.get() >= stopAfterGood && System.currentTimeMillis() - firstGoodAt.get() > graceMs) jobs.forEach { it.cancel() }
                     }
                 }
             }
@@ -235,8 +190,7 @@ class ServerManager(
             else xray.withBatch(parsed.map { it.second }) { eps ->
                 val map = HashMap<String, ProxyEndpoint?>()
                 parsed.forEachIndexed { k, (srv, _) -> map[srv.id] = eps[k] }
-                // Servers whose link could not be parsed are reported as failures via the null endpoint.
-                xrayServers.filter { it.id !in map }.forEach { map[it.id] = null }
+                xrayServers.filter { it.id !in map }.forEach { map[it.id] = null } // unparsable link: reported as failure
                 runAll(map)
             }
         }
@@ -244,103 +198,116 @@ class ServerManager(
         return results.toList()
     }
 
+    /** Re-tests every server, then repairs built-in slots that are still down. Returns (working, tested, repaired). */
+    suspend fun refreshAll(): Triple<Int, Int, Int> = withContext(Dispatchers.IO) {
+        ensureBuiltin()
+        val res = testMany(pool(), "Testing servers", overallTimeoutMs = 180_000)
+        val repaired = replaceDeadBuiltins()
+        Triple(res.count { it.second.ok } + repaired, res.size, repaired)
+    }
+
     // ---- selection -------------------------------------------------------------------------
 
-    suspend fun pool(s: AppSettings): List<Server> = servers.byOrigins(s.sourceMode.origins)
+    /** Every server the user can connect to, built-in slots first. */
+    suspend fun pool(): List<Server> = servers.all().sortedWith(compareBy<Server> { if (it.isBuiltin) 0 else 1 }.thenBy { it.addedAt })
 
     class NoServerException(message: String) : Exception(message)
 
     /**
-     * Chooses (and verifies) the server to connect to.
-     * Manual selection (auto-switch off) is honoured strictly; otherwise the fastest verified server of the
-     * configured source (and preferred country, if any) is used, refreshing lists only when needed.
+     * Chooses (and verifies) the server to connect to. A manual choice (auto-switch off) is honoured strictly;
+     * otherwise the fastest verified server is used, re-checking recent results first and testing the whole
+     * pool only when needed.
      */
-    suspend fun selectForConnect(s: AppSettings, onPhase: (String, Progress?) -> Unit): Pair<Server, TestResult> = withContext(Dispatchers.IO) {
+    suspend fun selectForConnect(s: AppSettings, onPhase: (String) -> Unit): Pair<Server, TestResult> = withContext(Dispatchers.IO) {
+        ensureBuiltin()
         val manualId = s.selectedServerId
         if (!s.autoSwitch && manualId != null) {
             val srv = servers.byId(manualId) ?: throw NoServerException("The selected server no longer exists")
-            onPhase("TESTING", null)
-            val r = testServer(srv, s)
+            onPhase("TESTING")
+            val r = testServer(srv)
             if (!r.ok) throw NoServerException("${srv.name} is not responding (${r.error ?: "test failed"})")
             return@withContext servers.byId(srv.id)!! to r
         }
-        fun fits(x: Server) = s.preferredCountry == null || x.countryCode == s.preferredCountry
-        // 1) Re-verify recently good servers (fast path).
         val now = System.currentTimeMillis()
-        var pool = pool(s)
-        val recent = Ranking.rank(pool.filter { now - it.lastChecked < 45 * 60_000L }, s.preferredCountry).take(12)
+        val pool = pool()
+        if (pool.isEmpty()) throw NoServerException("No servers available. Add a server or restore the built-in list.")
+        // 1) Re-verify recently good servers (fast path).
+        val recent = Ranking.rank(pool.filter { now - it.lastChecked < Tuning.RECENT_RESULT_MS }).take(8)
         if (recent.isNotEmpty()) {
-            onPhase("TESTING", null)
-            val res = testMany(recent, s, "Checking recent servers", stopAfterGood = 3, graceMs = 2_000, overallTimeoutMs = 25_000)
-            best(res, ::fits)?.let { return@withContext it }
+            onPhase("TESTING")
+            best(testMany(recent, "Checking recent servers", stopAfterGood = 3, graceMs = 2_000, overallTimeoutMs = 25_000))?.let { return@withContext it }
         }
-        // 2) Refresh sources that need it.
-        val origins = s.sourceMode.origins
-        for (o in listOf(ServerOrigin.TERVYN_FAST, ServerOrigin.TERVYN_ALL).filter { it in origins }) {
-            if (pool.none { it.origin == o } || builtinStale(o)) {
-                onPhase("FETCHING", null)
-                val st = refreshBuiltin(o)
-                if (st.error != null && pool.none { it.origin == o }) throw NoServerException("Could not download the Tervyn server list: ${st.error}")
+        // 2) Test the pool: untested first, then previously working, then the rest.
+        onPhase("TESTING")
+        val candidates = pool.sortedWith(compareBy<Server> { if (it.lastChecked == 0L) 0 else if (it.alive) 1 else 2 }.thenBy { it.latencyMs ?: Int.MAX_VALUE })
+        best(testMany(candidates, "Testing servers", stopAfterGood = 4, graceMs = 4_000, overallTimeoutMs = 120_000))?.let { return@withContext it }
+        // 3) Nothing works: try to repair built-in slots from the Tervyn lists, then use a repaired one.
+        onPhase("FETCHING")
+        if (replaceDeadBuiltins() > 0) {
+            Ranking.rank(pool()).firstOrNull()?.let { fixed ->
+                onPhase("TESTING")
+                val r = testServer(fixed)
+                if (r.ok) return@withContext servers.byId(fixed.id)!! to r
             }
         }
-        if (ServerOrigin.FREE_PUBLIC in origins) {
-            val untested = pool.count { it.origin == ServerOrigin.FREE_PUBLIC && it.lastChecked == 0L }
-            if (untested < 100 || now - lastListRefresh > s.listRefreshMin * 60_000L) {
-                onPhase("FETCHING", null)
-                runCatching { refreshFreeLists(s) }
-            }
-        }
-        if (ServerOrigin.PROXIO in origins && pool.none { it.origin == ServerOrigin.PROXIO }) {
-            onPhase("FETCHING", null)
-            runCatching { refreshProxio(s) }.onFailure { if (origins.size == 1) throw NoServerException(it.message ?: "Proxio failed") }
-        }
-        pool = pool(s)
-        if (pool.isEmpty()) throw NoServerException(
-            when (s.sourceMode) {
-                com.tervyn.vpn.domain.SourceMode.FREE -> "Could not download any proxy lists. Check your internet connection."
-                com.tervyn.vpn.domain.SourceMode.PROXIO -> "No Proxio.io servers. Add your API key in Server Source."
-                else -> "No servers configured for \"${s.sourceMode.label}\". Add servers in Server Source."
-            }
-        )
-        // 3) Test candidates: untested and stale first-class citizens, then everything else.
-        val candidates = pool.filter { it.failCount < 3 }
-            .sortedWith(compareBy<Server> { if (it.alive) 0 else if (it.lastChecked == 0L) 1 else 2 }.thenBy { it.latencyMs ?: Int.MAX_VALUE }
-                .thenBy { if (it.origin == ServerOrigin.TERVYN_FAST) 0 else 1 }.thenBy { it.addedAt })
-            .let { l -> if (origins.any { it == ServerOrigin.TERVYN_FAST || it == ServerOrigin.TERVYN_ALL }) l else l.take(40) + l.drop(40).shuffled() }
-            .take(if (ServerOrigin.TERVYN_ALL in origins) 400 else 1500)
-        onPhase("TESTING", null)
-        val res = testMany(candidates, s, "Testing servers", stopAfterGood = 6, graceMs = 4_000, overallTimeoutMs = 150_000)
-        best(res, ::fits) ?: throw NoServerException(
-                if (s.preferredCountry != null && res.any { it.second.ok }) "No working server in ${s.preferredCountry}. Choose another country."
-                else "No working server found (${res.size} tested). Try again or change the server source."
-            )
+        throw NoServerException("No working server found (${candidates.size} tested). Check your internet connection and try again.")
     }
 
-    private suspend fun best(res: List<Pair<Server, TestResult>>, fits: (Server) -> Boolean): Pair<Server, TestResult>? {
-        val ok = res.filter { it.second.ok }.mapNotNull { (srv, r) -> servers.byId(srv.id)?.let { it to r } }.filter { fits(it.first) }
+    private suspend fun best(res: List<Pair<Server, TestResult>>): Pair<Server, TestResult>? {
+        val ok = res.filter { it.second.ok }.mapNotNull { (srv, r) -> servers.byId(srv.id)?.let { it to r } }
         return ok.minByOrNull { Ranking.score(it.first) }
     }
 
     /** Top verified backups (excluding [activeId]) used by failover / auto-switch. */
-    suspend fun backups(s: AppSettings, activeId: String?, n: Int = 5): List<Server> =
-        Ranking.rank(pool(s).filter { it.id != activeId }, s.preferredCountry).take(n)
-
-    /** Countries that have at least one verified server in the current pool. */
-    suspend fun countries(s: AppSettings): Map<String, List<Server>> =
-        pool(s).filter { it.alive && it.countryCode != null }.groupBy { it.countryCode!! }
+    suspend fun backups(activeId: String?, n: Int = 5): List<Server> = Ranking.rank(pool().filter { it.id != activeId }).take(n)
 
     fun xrayAvailable() = xray.available
-
-    @Suppress("unused")
-    private val appContext = context.applicationContext
 }
 
-
-/** The Tervyn server lists built into the app (standard base64/plain subscription format). */
-object BuiltinServers {
+/**
+ * Finds replacement links for built-in slots in the Tervyn lists. Only TLS/REALITY VLESS, Trojan and VMess
+ * links with a declared country are considered; the fastest list is preferred over the full one.
+ */
+object BuiltinUpdater {
     const val FASTEST_URL = "https://vless.svinakraft.workers.dev/fastest.txt"
     const val ALL_URL = "https://vless.svinakraft.workers.dev/podpiska.txt"
 
-    fun urlFor(origin: ServerOrigin) = if (origin == ServerOrigin.TERVYN_ALL) ALL_URL else FASTEST_URL
-    fun labelFor(origin: ServerOrigin) = if (origin == ServerOrigin.TERVYN_ALL) "all Tervyn servers" else "fastest Tervyn servers"
+    private fun eligible(o: XrayOutbound) =
+        o.protocol in setOf(XrayProtocol.VLESS, XrayProtocol.TROJAN, XrayProtocol.VMESS) && o.security in setOf("tls", "reality")
+
+    /** Candidate links per country code, best first. */
+    fun rank(fastest: String?, all: String?): Map<String, List<Pair<String, XrayOutbound>>> {
+        val out = LinkedHashMap<String, MutableList<Pair<String, XrayOutbound>>>()
+        val seen = HashSet<String>()
+        fun add(body: String?, tier: Int) {
+            if (body == null) return
+            val links = Links.parseSubscription(body).links
+                .filter { eligible(it.second) }
+                .sortedWith(compareBy<Pair<String, XrayOutbound>> { if (it.second.security == "reality") 0 else 1 }
+                    .thenBy { if (it.second.network in setOf("tcp", "raw", "grpc", "xhttp")) 0 else 1 })
+            for ((link, o) in links) {
+                val cc = Format.countryCodeFromFlag(o.name) ?: continue
+                val key = link.substringBefore('#')
+                if (!seen.add(key)) continue
+                out.getOrPut(cc) { mutableListOf() }.add(link to o)
+            }
+            if (tier == 0) out.values.forEach { l -> l.forEach { seen.add(it.first.substringBefore('#')) } }
+        }
+        add(fastest, 0)
+        add(all, 1)
+        return out
+    }
+
+    suspend fun fetchCandidates(http: OkHttpClient): Map<String, List<Pair<String, XrayOutbound>>> = withContext(Dispatchers.IO) {
+        fun get(url: String): String? = runCatching {
+            http.newCall(Request.Builder().url(url).header("User-Agent", "TervynVPN/1.0").build()).execute().use { r ->
+                if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
+                r.body.string().also { if (it.length > 8_000_000) throw IOException("list too large") }
+            }
+        }.getOrNull()
+        val fastest = get(FASTEST_URL)
+        val all = get(ALL_URL)
+        if (fastest == null && all == null) throw IOException("Could not download the Tervyn server lists")
+        rank(fastest, all)
+    }
 }

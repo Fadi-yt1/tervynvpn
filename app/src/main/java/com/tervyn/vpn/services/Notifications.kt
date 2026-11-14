@@ -22,47 +22,44 @@ import com.tervyn.vpn.vpn.VpnStatus
 object Notifications {
     const val STATUS_ID = 1001
     private const val CH_STATUS = "vpn_status"
-    // Channel sound/vibration cannot be changed after creation, so each combination has its own channel.
-    private const val CH_QUIET = "vpn_events_quiet"
-    private const val CH_VIBRATE = "vpn_events_vibrate"
-    private const val CH_SOUND = "vpn_events_sound"
-    private const val CH_BOTH = "vpn_events_sound_vibrate"
+    private const val CH_EVENTS = "vpn_events"
+    private val LEGACY_CHANNELS = listOf("vpn_events_quiet", "vpn_events_vibrate", "vpn_events_sound", "vpn_events_sound_vibrate")
 
     enum class Kind { CONNECT, DISCONNECT, SWITCH, FAILURE, DATA }
 
     fun ensureChannels(ctx: Context) {
-        if (Build.VERSION.SDK_INT < 26) return
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_STATUS, "VPN status", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Persistent notification while Tervyn VPN is running"; setShowBadge(false)
+            description = "Shown while Tervyn VPN or Secure DNS is running"; setShowBadge(false)
         })
-        fun ev(id: String, name: String, sound: Boolean, vibrate: Boolean) =
-            NotificationChannel(id, name, NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Connection events (connected, switched, failed)"
-                if (!sound) setSound(null, null)
-                enableVibration(vibrate)
-                if (!vibrate) vibrationPattern = longArrayOf(0)
-            }
-        nm.createNotificationChannel(ev(CH_QUIET, "VPN events (silent)", false, false))
-        nm.createNotificationChannel(ev(CH_VIBRATE, "VPN events (vibrate)", false, true))
-        nm.createNotificationChannel(ev(CH_SOUND, "VPN events (sound)", true, false))
-        nm.createNotificationChannel(ev(CH_BOTH, "VPN events (sound + vibrate)", true, true))
+        nm.createNotificationChannel(NotificationChannel(CH_EVENTS, "Connection events", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "Connected, disconnected, server switched, connection failed"
+        })
+        LEGACY_CHANNELS.forEach { runCatching { nm.deleteNotificationChannel(it) } }
     }
 
     private fun openApp(ctx: Context) =
         PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE)
 
-    fun status(ctx: Context, s: VpnStatus, showSpeed: Boolean): android.app.Notification {
+    fun status(ctx: Context, s: VpnStatus, showSpeed: Boolean, dnsProvider: String? = null): android.app.Notification {
+        val dnsOnly = s.phase == Phase.DNS_ONLY
         val title = when (s.phase) {
             Phase.CONNECTED -> "Connected" + (s.server?.let { " · ${it.name}" } ?: "")
+            Phase.DNS_ONLY -> "Secure DNS active"
             else -> s.phase.label
         }
         val text = when {
+            dnsOnly -> "Encrypted lookups via ${dnsProvider ?: "DNS-over-HTTPS"}" + if (s.dnsQueries > 0) " · ${s.dnsQueries} queries" else ""
             s.phase == Phase.CONNECTED && showSpeed -> "↓ ${Format.speed(s.downBps)}   ↑ ${Format.speed(s.upBps)}" + (s.exitIp?.let { "   IP $it" } ?: "")
             s.phase == Phase.CONNECTED -> s.exitIp?.let { "Exit IP $it" } ?: "Protected"
             else -> s.message ?: ""
         }
-        val stop = PendingIntent.getService(ctx, 1, Intent(ctx, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_DISCONNECT), PendingIntent.FLAG_IMMUTABLE)
+        val action = if (dnsOnly) {
+            PendingIntent.getService(ctx, 2, Intent(ctx, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_STOP_DNS)
+                .putExtra(TervynVpnService.EXTRA_DISABLE_SETTING, true), PendingIntent.FLAG_IMMUTABLE)
+        } else {
+            PendingIntent.getService(ctx, 1, Intent(ctx, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_DISCONNECT), PendingIntent.FLAG_IMMUTABLE)
+        }
         return NotificationCompat.Builder(ctx, CH_STATUS)
             .setSmallIcon(R.drawable.ic_stat_tervyn)
             .setContentTitle(title)
@@ -73,13 +70,13 @@ object Notifications {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(openApp(ctx))
-            .addAction(0, "Disconnect", stop)
+            .addAction(0, if (dnsOnly) "Turn off" else "Disconnect", action)
             .build()
     }
 
-    fun updateStatus(ctx: Context, s: VpnStatus, showSpeed: Boolean) {
+    fun updateStatus(ctx: Context, s: VpnStatus, showSpeed: Boolean, dnsProvider: String? = null) {
         if (!canPost(ctx)) return
-        runCatching { NotificationManagerCompat.from(ctx).notify(STATUS_ID, status(ctx, s, showSpeed)) }
+        runCatching { NotificationManagerCompat.from(ctx).notify(STATUS_ID, status(ctx, s, showSpeed, dnsProvider)) }
     }
 
     fun canPost(ctx: Context) = Build.VERSION.SDK_INT < 33 ||
@@ -94,13 +91,7 @@ object Notifications {
             Kind.DATA -> s.dataAlertMb > 0
         }
         if (!s.notificationsEnabled || !enabled || !canPost(ctx)) return
-        val ch = when {
-            s.sound && s.vibration -> CH_BOTH
-            s.sound -> CH_SOUND
-            s.vibration -> CH_VIBRATE
-            else -> CH_QUIET
-        }
-        val n = NotificationCompat.Builder(ctx, ch)
+        val n = NotificationCompat.Builder(ctx, CH_EVENTS)
             .setSmallIcon(R.drawable.ic_stat_tervyn)
             .setContentTitle(title)
             .setContentText(text)

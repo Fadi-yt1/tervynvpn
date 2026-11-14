@@ -15,13 +15,15 @@ import kotlinx.coroutines.flow.update
 
 enum class Phase(val label: String, val busy: Boolean) {
     DISCONNECTED("Disconnected", false),
-    FETCHING("Fetching servers…", true),
+    FETCHING("Updating server list…", true),
     TESTING("Testing servers…", true),
     CONNECTING("Connecting…", true),
     CONNECTED("Connected", false),
     SWITCHING("Switching server…", true),
     RECONNECTING("Reconnecting…", true),
     FAILED("Connection failed", false),
+    /** No server is connected; the tunnel only carries DNS, answered over DNS-over-HTTPS (Secure DNS). */
+    DNS_ONLY("Secure DNS active", false),
 }
 
 data class VpnStatus(
@@ -49,8 +51,12 @@ data class VpnStatus(
     val lockdown: Boolean? = null,
     val error: String? = null,
 ) {
-    val isActive get() = phase != Phase.DISCONNECTED && phase != Phase.FAILED
+    /** A server connection is up or being established (Secure DNS alone does not count). */
+    val isActive get() = phase != Phase.DISCONNECTED && phase != Phase.FAILED && phase != Phase.DNS_ONLY
     val isConnected get() = phase == Phase.CONNECTED
+    val isDnsOnly get() = phase == Phase.DNS_ONLY
+    /** The VPN interface exists (server tunnel or DNS-only tunnel). */
+    val tunnelUp get() = isActive || isDnsOnly
 }
 
 /** Single source of truth for the VPN state, shared by UI, tile and service. */
@@ -64,30 +70,53 @@ class VpnController(private val app: Context, private val settings: SettingsRepo
 
     internal fun set(transform: (VpnStatus) -> VpnStatus) = _status.update(transform)
 
+    /** Non-null when the system VPN consent dialog must be shown first (needed for both VPN and Secure DNS). */
     fun needsPermission(): Intent? = VpnService.prepare(app)
 
+    /** Connects to a server. Works from the idle state and from Secure-DNS-only mode. */
     fun connect() {
         if (_status.value.isActive) return
         _status.update { it.copy(phase = Phase.CONNECTING, error = null, message = "Starting…") }
         ContextCompat.startForegroundService(app, Intent(app, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_CONNECT))
     }
 
+    /** Disconnects the server. If Secure DNS is enabled the service stays up in DNS-only mode. */
     fun disconnect() {
-        if (!_status.value.isActive) { _status.update { it.copy(phase = Phase.DISCONNECTED, error = null) }; return }
+        if (!_status.value.tunnelUp) { _status.update { it.copy(phase = Phase.DISCONNECTED, error = null) }; return }
         app.startService(Intent(app, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_DISCONNECT))
     }
 
     fun toggle() = if (_status.value.isActive) disconnect() else connect()
 
+    /** Starts the DNS-only tunnel (no server). Only meaningful when no server connection is active. */
+    fun startSecureDns() {
+        if (_status.value.tunnelUp) return
+        _status.update { it.copy(phase = Phase.DNS_ONLY, message = "Starting Secure DNS…", error = null) }
+        ContextCompat.startForegroundService(app, Intent(app, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_DNS_ONLY))
+    }
+
+    /** Stops the DNS-only tunnel. A server connection is not affected. */
+    fun stopSecureDns() {
+        if (_status.value.isDnsOnly) app.startService(Intent(app, TervynVpnService::class.java).setAction(TervynVpnService.ACTION_STOP_DNS))
+    }
+
+    /**
+     * Turns the Secure DNS feature on or off. It runs only while no server is connected: enabling it while
+     * connected takes effect after the next disconnect; disabling it while in DNS-only mode stops the tunnel.
+     */
+    suspend fun setSecureDns(enabled: Boolean) {
+        settings.update { it.copy(secureDns = enabled) }
+        val s = _status.value
+        when {
+            enabled && !s.tunnelUp && needsPermission() == null -> startSecureDns()
+            !enabled && s.isDnsOnly -> stopSecureDns()
+        }
+    }
+
     /** Selecting a specific server disables auto-switch; null ("Fastest available") enables it. */
     suspend fun selectServer(serverId: String?) {
         settings.update { it.copy(selectedServerId = serverId, autoSwitch = serverId == null) }
         if (_status.value.isActive) send(TervynVpnService.ACTION_SWITCH, serverId)
-    }
-
-    suspend fun selectCountry(country: String?) {
-        settings.update { it.copy(preferredCountry = country, selectedServerId = null, autoSwitch = true) }
-        if (_status.value.isActive) send(TervynVpnService.ACTION_SWITCH, null)
     }
 
     /** Routing (mode, excluded apps, preset IP ranges) changed: rebuild the TUN when connected. */

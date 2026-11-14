@@ -20,17 +20,20 @@ import com.tervyn.vpn.core.Domains
 import com.tervyn.vpn.core.Links
 import com.tervyn.vpn.core.Ranking
 import com.tervyn.vpn.core.ServerManager
+import com.tervyn.vpn.core.Tuning
 import com.tervyn.vpn.data.AppSettings
+import com.tervyn.vpn.data.SplitMode
 import com.tervyn.vpn.database.HistoryEntity
 import com.tervyn.vpn.domain.ProxyEndpoint
 import com.tervyn.vpn.domain.Server
-import com.tervyn.vpn.domain.ServerOrigin
 import com.tervyn.vpn.domain.TestResult
 import com.tervyn.vpn.domain.VpnMode
 import com.tervyn.vpn.net.DnsResponder
+import com.tervyn.vpn.net.DohForwarder
 import com.tervyn.vpn.net.FakeDns
 import com.tervyn.vpn.net.ProxyDialer
 import com.tervyn.vpn.services.Notifications
+import com.tervyn.vpn.utils.Format
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,18 +51,29 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /**
- * The Android VPN service. Owns the TUN interface, the [TunEngine], the active upstream proxy and the
- * background health / failover / auto-switch loops. All state is published through [VpnController].
+ * The Android VPN service. It runs in one of two modes:
+ *
+ *  - **Server mode** — the TUN carries the apps' traffic, which the [TunEngine] re-originates through the
+ *    active server. DNS is answered locally (synthetic addresses) and resolved by the server.
+ *  - **Secure DNS mode** — no server. Only the DNS address is routed into the TUN, so the interface carries
+ *    nothing but DNS queries, which are answered over DNS-over-HTTPS. All other traffic takes its normal path.
+ *
+ * The two are independent: connecting a server replaces the DNS-only tunnel, and disconnecting returns to
+ * DNS-only mode when the Secure DNS setting is on. All state is published through [VpnController].
  */
 class TervynVpnService : VpnService() {
 
     companion object {
         const val ACTION_CONNECT = "com.tervyn.vpn.CONNECT"
         const val ACTION_DISCONNECT = "com.tervyn.vpn.DISCONNECT"
+        const val ACTION_DNS_ONLY = "com.tervyn.vpn.DNS_ONLY"
+        const val ACTION_STOP_DNS = "com.tervyn.vpn.STOP_DNS"
         const val ACTION_SWITCH = "com.tervyn.vpn.SWITCH"
         const val ACTION_RELOAD = "com.tervyn.vpn.RELOAD"
         const val ACTION_RELOAD_DOMAINS = "com.tervyn.vpn.RELOAD_DOMAINS"
         const val EXTRA_SERVER = "server"
+        /** With [ACTION_STOP_DNS]: also turn the Secure DNS setting off (notification "Turn off"). */
+        const val EXTRA_DISABLE_SETTING = "disable"
         private const val TAG = "TervynVpn"
         private const val TUN_ADDR = "198.18.0.1"
         private const val TUN_V6 = "fdfe:7e7:7e7::1"
@@ -76,10 +90,13 @@ class TervynVpnService : VpnService() {
     private var monitorJobs = mutableListOf<Job>()
     private var tun: ParcelFileDescriptor? = null
     private var engine: TunEngine? = null
+    /** True while the engine serves the DNS-only tunnel (no server). */
+    @Volatile private var dnsOnly = false
     @Volatile private var upstream: ProxyEndpoint? = null
     @Volatile private var active: Server? = null
     @Volatile private var settings = AppSettings()
     @Volatile private var matcher = Domains.Matcher(emptyList())
+    @Volatile private var matcherCidrs: List<Pair<Int, Int>> = emptyList()
     private val fakeDns = FakeDns()
     private lateinit var dns: DnsResponder
     private var historyId: Long? = null
@@ -94,26 +111,31 @@ class TervynVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         Notifications.ensureChannels(this)
-        dns = DnsResponder(fakeDns, { name -> settings.mode == VpnMode.ALL_APPS || matcher.matches(name) }) { q ->
-            if (settings.mode == VpnMode.ALL_APPS) upstream?.let { c.doh.viaProxy(it, q) } else c.doh.direct(q)
+        dns = DnsResponder(
+            fakeDns,
+            shouldRoute = { name -> !dnsOnly && (settings.mode == VpnMode.ALL_APPS || matcher.matches(name)) },
+        ) { q ->
+            // Server mode, All apps: resolve through the server (no plaintext DNS, no local resolver involved).
+            // Only my sites / Secure DNS: resolve directly with the encrypted resolver.
+            if (!dnsOnly && settings.mode == VpnMode.ALL_APPS) upstream?.let { c.doh.viaProxy(it, q) } else c.doh.direct(q)
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_DISCONNECT -> { scope.launch { shutdown(null) }; return START_NOT_STICKY }
+            ACTION_DISCONNECT -> { scope.launch { disconnectServer(null) }; return START_NOT_STICKY }
+            ACTION_DNS_ONLY -> { startDnsOnly(); return START_STICKY }
+            ACTION_STOP_DNS -> { scope.launch { stopDnsOnly(intent.getBooleanExtra(EXTRA_DISABLE_SETTING, false)) }; return START_NOT_STICKY }
             ACTION_SWITCH -> { scope.launch { manualSwitch(intent.getStringExtra(EXTRA_SERVER)) }; return START_STICKY }
-            ACTION_RELOAD -> { scope.launch { lifecycle.withLock { if (engine != null) rebuildTun() } }; return START_STICKY }
+            ACTION_RELOAD -> { scope.launch { lifecycle.withLock { if (engine != null && !dnsOnly) rebuildTun() } }; return START_STICKY }
             ACTION_RELOAD_DOMAINS -> { scope.launch { reloadDomains() }; return START_STICKY }
             else -> startConnect() // ACTION_CONNECT, or started by the system for always-on VPN (SERVICE_INTERFACE)
         }
         return START_STICKY
     }
 
-    // ---- connect ---------------------------------------------------------------------------
-
     private fun goForeground(text: String) {
-        val n = Notifications.status(this, controller.status.value.copy(message = text), settings.showSpeedInNotification)
+        val n = Notifications.status(this, controller.status.value.copy(message = text), settings.showSpeedInNotification, dnsProviderName())
         ServiceCompat.startForeground(
             this, Notifications.STATUS_ID, n,
             if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0,
@@ -121,9 +143,81 @@ class TervynVpnService : VpnService() {
         foreground = true
     }
 
+    private fun dnsProviderName() = DohForwarder.PRESETS.entries.firstOrNull { it.value == c.dohUrlCache }?.key ?: "custom resolver"
+
+    // ---- Secure DNS (DNS-only tunnel) ----------------------------------------------------------
+
+    private fun startDnsOnly() {
+        goForeground("Starting Secure DNS…")
+        scope.launch {
+            lifecycle.withLock {
+                if (engine != null && !dnsOnly) return@withLock // a server is connected: it already handles DNS
+                if (engine?.isRunning == true && dnsOnly) return@withLock
+                startDnsOnlyLocked(keepError = null)
+            }
+        }
+    }
+
+    /** Establishes the DNS-only tunnel. Must hold [lifecycle]. */
+    private suspend fun startDnsOnlyLocked(keepError: String?) {
+        settings = c.settings.current()
+        try {
+            dnsOnly = true
+            val pfd = Builder()
+                .setSession("Tervyn Secure DNS")
+                .setMtu(MTU)
+                .addAddress(TUN_ADDR, 32)
+                .addDnsServer(DNS_ADDR)
+                .addRoute(DNS_ADDR, 32) // only DNS enters the tunnel; everything else keeps its normal route
+                .addDisallowedApplication(packageName)
+                .setBlocking(true)
+                .apply { if (Build.VERSION.SDK_INT >= 29) setMetered(false) }
+                .setConfigureIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+                .establish() ?: throw IOException("VPN permission was revoked")
+            val e = TunEngine(TunInput(pfd), TunOutput(pfd.fileDescriptor), TunEngine.Config(routeAll = false, mtu = MTU), fakeDns, dns) { _, _ ->
+                throw IOException("No server connected")
+            }
+            tun = pfd
+            engine = e
+            e.start()
+            controller.set { VpnStatus(phase = Phase.DNS_ONLY, mode = settings.mode, error = keepError, message = keepError) }
+            monitorJobs.forEach { it.cancel() }
+            monitorJobs.clear()
+            monitorJobs += scope.launch { dnsStatsLoop() }
+            if (foreground) Notifications.updateStatus(this, controller.status.value, settings.showSpeedInNotification, dnsProviderName())
+        } catch (e: Exception) {
+            dnsOnly = false
+            Log.w(TAG, "secure dns failed: ${e.javaClass.simpleName}")
+            controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode, error = e.message, message = "Secure DNS could not start: ${e.message}") }
+            stopSelfCompletely()
+        }
+    }
+
+    private suspend fun stopDnsOnly(disableSetting: Boolean) {
+        lifecycle.withLock {
+            if (disableSetting) c.settings.update { it.copy(secureDns = false) }
+            if (!dnsOnly) return@withLock
+            teardown("ENDED", null)
+            controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode) }
+        }
+        if (!controller.status.value.tunnelUp) stopSelfCompletely()
+    }
+
+    private suspend fun dnsStatsLoop() {
+        var tick = 0
+        while (true) {
+            delay(1000)
+            val e = engine ?: continue
+            controller.set { it.copy(dnsQueries = e.dnsQueries.get()) }
+            if (++tick % 5 == 0 && foreground) Notifications.updateStatus(this, controller.status.value, settings.showSpeedInNotification, dnsProviderName())
+        }
+    }
+
+    // ---- connect ---------------------------------------------------------------------------
+
     private fun startConnect() {
         goForeground("Starting…")
-        if (connectJob?.isActive == true || engine != null) return
+        if (connectJob?.isActive == true || (engine != null && !dnsOnly)) return
         connectJob = scope.launch {
             var attempt = 0
             while (isActive) {
@@ -158,7 +252,7 @@ class TervynVpnService : VpnService() {
             }
         }
         try {
-            val (server, _) = c.serverManager.selectForConnect(settings) { phase, _ ->
+            val (server, _) = c.serverManager.selectForConnect(settings) { phase ->
                 controller.set { it.copy(phase = if (phase == "FETCHING") Phase.FETCHING else Phase.TESTING) }
             }
             controller.set { it.copy(phase = Phase.CONNECTING, server = server, message = "Connecting to ${server.name}…") }
@@ -166,11 +260,12 @@ class TervynVpnService : VpnService() {
             upstream = ep
             controller.activeEndpoint = ep
             active = srv
+            dnsOnly = false
             establishTunAndEngine()
             val now = System.currentTimeMillis()
             controller.set {
-                it.copy(phase = Phase.CONNECTED, server = srv, exitIp = verify.exitIp, countryCode = verify.countryCode ?: srv.countryCode,
-                    connectedSince = now, pingMs = verify.latencyMs, message = null, error = null, lastHealthCheck = now,
+                it.copy(phase = Phase.CONNECTED, server = srv, exitIp = verify.exitIp, countryCode = verify.countryCode ?: srv.displayCountry,
+                    connectedSince = now, pingMs = verify.latencyMs, message = null, error = null, lastHealthCheck = now, dnsQueries = 0,
                     alwaysOn = if (Build.VERSION.SDK_INT >= 29) isAlwaysOn else null,
                     lockdown = if (Build.VERSION.SDK_INT >= 29) isLockdownEnabled else null)
             }
@@ -202,7 +297,7 @@ class TervynVpnService : VpnService() {
             r?.second?.error?.let { lastError = it }
             c.servers.recordTest(candidate.id, r?.second ?: TestResult(false, error = lastError))
             if (!settings.autoSwitch) break
-            candidate = c.serverManager.backups(settings, null, 8).firstOrNull { it.id !in tried }
+            candidate = c.serverManager.backups(null, 8).firstOrNull { it.id !in tried }
             val next = candidate
             if (next != null) controller.set { it.copy(phase = Phase.CONNECTING, server = next, message = "Trying ${next.name}…") }
         }
@@ -215,7 +310,7 @@ class TervynVpnService : VpnService() {
             if (!c.xray.available) throw IOException("Xray is not available for this device ABI")
             c.xray.startActive(server.id, Links.parse(server.xrayLink!!))
         } else server.endpoint!!
-        val r = c.serverManager.tester(settings).test(ep)
+        val r = c.serverManager.tester().test(ep)
         if (!r.ok && server.isXray) c.xray.stop(server.id)
         return ep to r
     }
@@ -235,10 +330,10 @@ class TervynVpnService : VpnService() {
             b.addAddress(TUN_V6, 126)
             b.addRoute("::", 0)
         } else {
-            matcherCidrs.forEach { (net, prefix) -> runCatching { b.addRoute(com.tervyn.vpn.vpn.Packets.ipToString(net), prefix) } }
+            matcherCidrs.forEach { (net, prefix) -> runCatching { b.addRoute(Packets.ipToString(net), prefix) } }
         }
-        // Tervyn's own traffic (proxy tests, list downloads, Xray) must never loop back into the tunnel.
-        if (settings.splitMode == com.tervyn.vpn.data.SplitMode.ONLY_SELECTED && settings.includedApps.isNotEmpty()) {
+        // Tervyn's own traffic (server tests, list downloads, Xray) must never loop back into the tunnel.
+        if (settings.splitMode == SplitMode.ONLY_SELECTED && settings.includedApps.isNotEmpty()) {
             // Allow-list mode: only the chosen apps are routed; Tervyn itself is implicitly outside the tunnel.
             settings.includedApps.filter { it != packageName }.forEach { pkg -> runCatching { b.addAllowedApplication(pkg) } }
         } else {
@@ -251,8 +346,6 @@ class TervynVpnService : VpnService() {
         currentNetwork?.let { b.setUnderlyingNetworks(arrayOf(it)) }
         return b.establish() ?: throw IOException("VPN permission was revoked")
     }
-
-    @Volatile private var matcherCidrs: List<Pair<Int, Int>> = emptyList()
 
     private fun establishTunAndEngine() {
         val pfd = buildTun()
@@ -292,7 +385,7 @@ class TervynVpnService : VpnService() {
         val newCidrs = c.domains.enabledCidrs().mapNotNull { Domains.parseCidr(it) }
         val changed = newCidrs != matcherCidrs
         matcherCidrs = newCidrs
-        if (changed && engine != null && settings.mode == VpnMode.ONLY_MY_SITES) rebuildTun()
+        if (changed && engine != null && !dnsOnly && settings.mode == VpnMode.ONLY_MY_SITES) rebuildTun()
     }
 
     /** Polls the TUN fd so the reader can notice shutdown (a blocked read() is not interrupted by close()). */
@@ -329,9 +422,7 @@ class TervynVpnService : VpnService() {
         monitorJobs.clear()
         monitorJobs += scope.launch { statsLoop() }
         monitorJobs += scope.launch { healthLoop() }
-        if (ServerOrigin.FREE_PUBLIC in settings.sourceMode.origins) monitorJobs += scope.launch { refreshLoop() }
-        val builtin = settings.sourceMode.origins.filter { it == ServerOrigin.TERVYN_FAST || it == ServerOrigin.TERVYN_ALL }
-        if (builtin.isNotEmpty()) monitorJobs += scope.launch { builtinRefreshLoop(builtin) }
+        monitorJobs += scope.launch { builtinRefreshLoop() }
     }
 
     private suspend fun statsLoop() {
@@ -348,12 +439,12 @@ class TervynVpnService : VpnService() {
                 it.copy(downBps = dBps, upBps = uBps, totalDown = down, totalUp = up, activeConnections = e.activeConnections,
                     udpBlocked = e.udpBlocked.get(), dnsQueries = e.dnsQueries.get())
             }
-            if (++tick % 3 == 0 && foreground) Notifications.updateStatus(this, controller.status.value, settings.showSpeedInNotification)
+            if (++tick % 3 == 0 && foreground) Notifications.updateStatus(this, controller.status.value, settings.showSpeedInNotification, dnsProviderName())
             if (tick % 30 == 0) historyId?.let { c.history.updateTraffic(it, down, up) }
             val alertBytes = settings.dataAlertMb.toLong() * 1_048_576
             if (alertBytes > 0 && !dataAlertSent && down + up >= alertBytes) {
                 dataAlertSent = true
-                Notifications.event(this, settings, "Data usage", "This session has used ${com.tervyn.vpn.utils.Format.bytes(down + up)} through Tervyn VPN.", Notifications.Kind.DATA)
+                Notifications.event(this, settings, "Data usage", "This session has used ${Format.bytes(down + up)} through Tervyn VPN.", Notifications.Kind.DATA)
             }
             if (e.dialFailures.get() >= 4 && controller.status.value.phase == Phase.CONNECTED) {
                 e.dialFailures.set(0)
@@ -364,7 +455,7 @@ class TervynVpnService : VpnService() {
 
     private suspend fun healthLoop() {
         while (true) {
-            delay(settings.healthCheckSec * 1000L)
+            delay(Tuning.HEALTH_CHECK_SEC * 1000L)
             healthCheck(urgent = false)
         }
     }
@@ -378,7 +469,7 @@ class TervynVpnService : VpnService() {
         // Restart a crashed Xray instance transparently.
         val r = if (srv.isXray && !c.xray.isRunning(srv.id)) runCatching { activate(srv) }.getOrNull()?.also { upstream = it.first; controller.activeEndpoint = it.first }?.second
             ?: TestResult(false, error = "Xray restart failed")
-        else c.serverManager.tester(settings).test(ep)
+        else c.serverManager.tester().test(ep)
         c.servers.recordTest(srv.id, r)
         val now = System.currentTimeMillis()
         if (r.ok) {
@@ -390,18 +481,18 @@ class TervynVpnService : VpnService() {
             Log.w(TAG, "health check failed ($healthFailures)")
         }
         val dead = !r.ok && (healthFailures >= 2 || urgent)
-        // Keep backups verified (only a handful, to save battery and data).
-        val backups = c.serverManager.backups(settings, srv.id, 5)
-        if (backups.isNotEmpty()) c.serverManager.testMany(backups, settings.copy(testConcurrency = 5), "Checking backups", overallTimeoutMs = 30_000)
-        val ranked = c.serverManager.backups(settings, srv.id, 5)
+        // Keep a handful of backups verified (few, to save battery and data).
+        val backups = c.serverManager.backups(srv.id, 5)
+        if (backups.isNotEmpty()) c.serverManager.testMany(backups, "Checking backups", overallTimeoutMs = 30_000, concurrency = 5)
+        val ranked = c.serverManager.backups(srv.id, 5)
         val current = c.servers.byId(srv.id) ?: srv
         val decision = Ranking.decide(
             autoSwitch = settings.autoSwitch, active = current, activeAlive = !dead, candidates = ranked,
-            thresholdPct = settings.switchThresholdPct, consecutiveFasterChecks = fasterStreak, lastSwitchAt = lastSwitchAt, now = now,
+            thresholdPct = Tuning.SWITCH_THRESHOLD_PCT, consecutiveFasterChecks = fasterStreak, lastSwitchAt = lastSwitchAt, now = now,
         )
         val best = ranked.firstOrNull()
         fasterStreak = if (best?.latencyMs != null && current.latencyMs != null &&
-            Ranking.isClearlyFaster(best.latencyMs, current.latencyMs, settings.switchThresholdPct)) fasterStreak + 1 else 0
+            Ranking.isClearlyFaster(best.latencyMs, current.latencyMs, Tuning.SWITCH_THRESHOLD_PCT)) fasterStreak + 1 else 0
         when {
             decision.switchTo != null -> switchTo(decision.switchTo, decision.reason)
             dead -> {
@@ -416,29 +507,14 @@ class TervynVpnService : VpnService() {
         }
     }
 
-    private suspend fun refreshLoop() {
+    /** Periodically re-verifies the pool and repairs built-in slots that died, so failover always has options. */
+    private suspend fun builtinRefreshLoop() {
         while (true) {
-            delay(settings.listRefreshMin * 60_000L)
+            delay(Tuning.BUILTIN_REFRESH_MIN * 60_000L)
             runCatching {
-                c.serverManager.refreshFreeLists(settings)
-                // Test a limited batch of new candidates in the background with low concurrency.
-                val untested = c.serverManager.pool(settings).filter { it.lastChecked == 0L }.shuffled().take(150)
-                c.serverManager.testMany(untested, settings.copy(testConcurrency = 16), "Refreshing backups", overallTimeoutMs = 120_000)
-            }
-        }
-    }
-
-    /** Keeps the built-in Tervyn lists current (they advertise an hourly update interval) and re-tests new entries. */
-    private suspend fun builtinRefreshLoop(origins: List<ServerOrigin>) {
-        while (true) {
-            delay(15 * 60_000L)
-            for (o in origins) {
-                if (!c.serverManager.builtinStale(o)) continue
-                runCatching {
-                    c.serverManager.refreshBuiltin(o)
-                    val untested = c.serverManager.pool(settings).filter { it.origin == o && it.lastChecked == 0L }.sortedBy { it.addedAt }.take(100)
-                    c.serverManager.testMany(untested, settings.copy(testConcurrency = 24), "Checking new servers", overallTimeoutMs = 120_000)
-                }
+                val stale = c.serverManager.pool().filter { it.id != active?.id && System.currentTimeMillis() - it.lastChecked > Tuning.RECENT_RESULT_MS }
+                c.serverManager.testMany(stale, "Refreshing servers", overallTimeoutMs = 120_000, concurrency = 8)
+                c.serverManager.replaceDeadBuiltins()
             }
         }
     }
@@ -457,7 +533,7 @@ class TervynVpnService : VpnService() {
         active = target
         lastSwitchAt = System.currentTimeMillis()
         healthFailures = 0; fasterStreak = 0
-        controller.set { it.copy(phase = Phase.CONNECTED, server = target, exitIp = r.second.exitIp, countryCode = r.second.countryCode ?: target.countryCode, pingMs = r.second.latencyMs, message = null) }
+        controller.set { it.copy(phase = Phase.CONNECTED, server = target, exitIp = r.second.exitIp, countryCode = r.second.countryCode ?: target.displayCountry, pingMs = r.second.latencyMs, message = null) }
         c.servers.markUsed(target.id)
         val e = engine
         historyId?.let { c.history.finish(it, e?.bytesDown?.get() ?: 0, e?.bytesUp?.get() ?: 0, "SWITCHED", reason) }
@@ -471,25 +547,15 @@ class TervynVpnService : VpnService() {
 
     private suspend fun manualSwitch(serverId: String?) = lifecycle.withLock {
         settings = c.settings.current()
-        if (engine == null) return@withLock
+        if (engine == null || dnsOnly) return@withLock
         if (serverId != null) {
             val s = c.servers.byId(serverId) ?: return@withLock
-            switchTo(s, "Selected manually")
+            if (s.id != active?.id) switchTo(s, "Selected manually")
         } else {
-            // "Fastest available" (optionally within the preferred country).
+            // "Fastest available": move only when a verified backup is faster than the current server.
             val current = active
-            val currentFits = current != null && (settings.preferredCountry == null || current.countryCode == settings.preferredCountry)
-            val best = c.serverManager.backups(settings, current?.id, 3).firstOrNull()
-            when {
-                best != null && (!currentFits || (current?.latencyMs ?: Int.MAX_VALUE) > (best.latencyMs ?: Int.MAX_VALUE)) ->
-                    switchTo(best, "Fastest available")
-                best == null && !currentFits -> {
-                    controller.set { it.copy(phase = Phase.SWITCHING, message = "Finding the fastest server…") }
-                    val pick = runCatching { c.serverManager.selectForConnect(settings) { _, _ -> } }.getOrNull()
-                    if (pick != null) switchTo(pick.first, "Fastest available")
-                    else controller.set { it.copy(phase = Phase.CONNECTED, message = "No server found for that choice") }
-                }
-            }
+            val best = c.serverManager.backups(current?.id, 3).firstOrNull()
+            if (best != null && (current?.latencyMs ?: Int.MAX_VALUE) > (best.latencyMs ?: Int.MAX_VALUE)) switchTo(best, "Fastest available")
         }
     }
 
@@ -513,9 +579,7 @@ class TervynVpnService : VpnService() {
             }
 
             override fun onLost(network: Network) {
-                if (network == currentNetwork) {
-                    controller.set { it.copy(phase = Phase.RECONNECTING, message = "Waiting for network…") }
-                }
+                if (network == currentNetwork) controller.set { it.copy(phase = Phase.RECONNECTING, message = "Waiting for network…") }
             }
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = Unit
@@ -525,26 +589,38 @@ class TervynVpnService : VpnService() {
 
     // ---- shutdown --------------------------------------------------------------------------
 
+    /** The server connection failed. Falls back to Secure DNS when enabled, otherwise stops. */
     private suspend fun fail(message: String) {
         controller.set { VpnStatus(phase = Phase.FAILED, error = message, message = message, mode = settings.mode) }
         Notifications.event(this, settings, "Connection failed", message, Notifications.Kind.FAILURE)
         runCatching { c.history.log("EVENT", "Connection failed", message) }
-        teardown("FAILED", message)
-        stopSelfCompletely()
+        lifecycle.withLock {
+            teardown("FAILED", message)
+            if (c.settings.current().secureDns && VpnService.prepare(this) == null) startDnsOnlyLocked(keepError = message)
+        }
+        if (!controller.status.value.tunnelUp) stopSelfCompletely()
     }
 
-    private suspend fun shutdown(reason: String?) {
+    /** User/notification disconnect. Returns to Secure DNS mode when that setting is on. */
+    private suspend fun disconnectServer(reason: String?) {
         connectJob?.cancel()
         lifecycle.withLock {
-            val wasConnected = engine != null
-            teardown("ENDED", reason)
-            controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode, message = reason) }
-            if (wasConnected) {
-                Notifications.event(this, settings, "Disconnected", reason ?: "Tervyn VPN is off", Notifications.Kind.DISCONNECT)
-                c.history.log("EVENT", "Disconnected", reason ?: "By user")
+            val wasConnected = engine != null && !dnsOnly
+            if (dnsOnly) {
+                // Only the DNS tunnel exists: "disconnect" turns it off as well.
+                teardown("ENDED", reason)
+                controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode, message = reason) }
+            } else {
+                teardown("ENDED", reason)
+                controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode, message = reason) }
+                if (wasConnected) {
+                    Notifications.event(this, settings, "Disconnected", reason ?: "Tervyn VPN is off", Notifications.Kind.DISCONNECT)
+                    c.history.log("EVENT", "Disconnected", reason ?: "By user")
+                }
+                if (c.settings.current().secureDns && VpnService.prepare(this) == null) startDnsOnlyLocked(keepError = null)
             }
         }
-        stopSelfCompletely()
+        if (!controller.status.value.tunnelUp) stopSelfCompletely()
     }
 
     private suspend fun teardown(status: String, detail: String?) {
@@ -554,6 +630,7 @@ class TervynVpnService : VpnService() {
         networkCallback = null
         val e = engine
         engine = null
+        dnsOnly = false
         e?.stop()
         runCatching { tun?.close() }
         tun = null
@@ -562,6 +639,7 @@ class TervynVpnService : VpnService() {
         upstream = null
         controller.activeEndpoint = null
         active = null
+        healthFailures = 0
         c.xray.stopAllExcept(null)
         fakeDns.clear()
     }
@@ -573,7 +651,15 @@ class TervynVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        scope.launch { shutdown("Another VPN was started or permission was revoked") }
+        // Another VPN took over or consent was revoked: everything (incl. Secure DNS) is gone until the user re-enables it.
+        scope.launch {
+            connectJob?.cancel()
+            lifecycle.withLock {
+                teardown("ENDED", "revoked")
+                controller.set { VpnStatus(phase = Phase.DISCONNECTED, mode = settings.mode, message = "Another VPN was started or permission was revoked") }
+            }
+            stopSelfCompletely()
+        }
     }
 
     override fun onDestroy() {

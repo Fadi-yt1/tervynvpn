@@ -36,9 +36,7 @@ interface ServerDao {
     @Query("DELETE FROM servers WHERE id = :id") suspend fun delete(id: String)
     @Query("DELETE FROM servers WHERE origin = :origin AND favorite = 0") suspend fun deleteByOrigin(origin: String)
     @Query("DELETE FROM servers WHERE subscriptionId = :sub") suspend fun deleteBySubscription(sub: Long)
-    /** Prunes free servers that keep failing, keeping favourites. */
-    @Query("DELETE FROM servers WHERE origin = 'FREE_PUBLIC' AND favorite = 0 AND (failCount >= :maxFails OR (alive = 0 AND lastChecked < :olderThan))")
-    suspend fun pruneFree(maxFails: Int, olderThan: Long)
+    @Query("UPDATE servers SET name = :name, declaredCountry = :declared WHERE id = :id") suspend fun rename(id: String, name: String, declared: String?)
     @Query("SELECT COUNT(*) FROM servers WHERE origin = :origin") suspend fun countByOrigin(origin: String): Int
 }
 

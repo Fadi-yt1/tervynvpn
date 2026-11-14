@@ -13,24 +13,23 @@ import com.tervyn.vpn.core.Domains
 import com.tervyn.vpn.core.LinkParseException
 import com.tervyn.vpn.core.Links
 import com.tervyn.vpn.core.ProxyList
-import com.tervyn.vpn.core.ProxySnippet
-import com.tervyn.vpn.core.Ranking
 import com.tervyn.vpn.data.AppSettings
+import com.tervyn.vpn.data.SplitMode
+import com.tervyn.vpn.data.SubscriptionRepository
 import com.tervyn.vpn.database.DomainEntity
 import com.tervyn.vpn.domain.ProxyEndpoint
 import com.tervyn.vpn.domain.ProxyProtocol
 import com.tervyn.vpn.domain.Server
 import com.tervyn.vpn.domain.ServerOrigin
-import com.tervyn.vpn.domain.SourceMode
 import com.tervyn.vpn.domain.TestResult
 import com.tervyn.vpn.domain.VpnMode
 import com.tervyn.vpn.net.DnsMessage
 import com.tervyn.vpn.net.HttpsOverProxy
 import com.tervyn.vpn.net.IpChecker
 import com.tervyn.vpn.net.IpInfo
+import com.tervyn.vpn.net.ProxyTester
 import com.tervyn.vpn.net.SpeedTest
 import com.tervyn.vpn.security.PinHasher
-import com.tervyn.vpn.utils.Format
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -58,14 +57,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val subscriptions = c.subscriptions.subscriptions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val history = c.history.recent.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val speedTests = c.history.speedTests().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val events = c.history.events().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val progress = c.serverManager.progress
-    val builtinStatus = c.serverManager.builtinStatus
     val pinHash = c.settings.pinHash.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages
     fun toast(msg: String) { _messages.tryEmit(msg) }
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { c.serverManager.ensureBuiltin() }
+            // First launch: measure the built-in servers once so the list shows real status, not "not tested".
+            val builtin = runCatching { c.servers.byOrigins(setOf(ServerOrigin.BUILTIN)) }.getOrDefault(emptyList())
+            if (builtin.isNotEmpty() && builtin.all { it.lastChecked == 0L } && c.settings.current().onboardingDone) refreshServers()
+        }
+    }
 
     // ---- connection --------------------------------------------------------------------------
 
@@ -74,12 +80,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectServer(id: String?) = viewModelScope.launch {
         c.controller.selectServer(id)
-        toast(if (id == null) "Fastest Available selected · auto-switch on" else "Server selected · auto-switch off")
+        toast(if (id == null) "Fastest available: Tervyn picks and keeps the best server" else "Server selected")
     }
 
-    fun selectCountry(cc: String?) = viewModelScope.launch {
-        c.controller.selectCountry(cc)
-        toast(if (cc == null) "Any country" else "Preferred country: ${Format.countryName(cc)}")
+    /** Persists the selection first, then connects, so the service reads the new choice. */
+    fun selectAndConnect(id: String, connect: () -> Unit) = viewModelScope.launch {
+        c.controller.selectServer(id)
+        connect()
+    }
+
+    /**
+     * "Fastest available" on/off. Turning it off needs a concrete server: the connected one, else the best verified
+     * one; without any, the choice is left on and the user is pointed to the Servers tab.
+     */
+    fun setAutoSwitch(on: Boolean) = viewModelScope.launch {
+        if (on) { c.controller.selectServer(null); return@launch }
+        val pick = status.value.server?.id ?: c.serverManager.backups(null, 1).firstOrNull()?.id
+        if (pick == null) toast("Choose a server in the Servers tab first") else c.controller.selectServer(pick)
     }
 
     fun setMode(mode: VpnMode) = viewModelScope.launch {
@@ -89,70 +106,56 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = viewModelScope.launch { c.settings.update(transform) }
 
-    fun setAutoSwitch(on: Boolean) = viewModelScope.launch {
-        c.settings.update { s -> if (on) s.copy(autoSwitch = true, selectedServerId = null) else s.copy(autoSwitch = false) }
+    // ---- secure dns --------------------------------------------------------------------------
+
+    /** Called after the VPN consent has been granted (the DNS-only tunnel needs it too). */
+    fun setSecureDns(on: Boolean) = viewModelScope.launch { c.controller.setSecureDns(on) }
+
+    fun setDohUrl(url: String) = viewModelScope.launch {
+        c.settings.update { it.copy(dohUrl = url) }
+        c.dohUrlCache = url
     }
 
     // ---- servers -----------------------------------------------------------------------------
 
     private var refreshJob: Job? = null
+    val refreshing: StateFlow<Boolean> get() = _refreshing
+    private val _refreshing = MutableStateFlow(false)
 
-    /** Manual refresh from the Servers screen: re-download lists (free source) and re-test the pool. */
+    /** Re-tests every server and repairs built-in slots that are down. */
     fun refreshServers() {
         if (refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch(Dispatchers.IO) {
-            val s = c.settings.current()
+            _refreshing.value = true
             try {
-                if (ServerOrigin.FREE_PUBLIC in s.sourceMode.origins) c.serverManager.refreshFreeLists(s)
-                for (o in listOf(ServerOrigin.TERVYN_FAST, ServerOrigin.TERVYN_ALL).filter { it in s.sourceMode.origins }) {
-                    val st = c.serverManager.refreshBuiltin(o)
-                    if (st.error != null) toast("Server list: ${st.error}")
-                }
-                if (ServerOrigin.PROXIO in s.sourceMode.origins && c.secureStore.proxioKey() != null) runCatching { c.serverManager.refreshProxio(s) }
-                val pool = c.serverManager.pool(s)
-                val builtin = s.sourceMode.origins.any { it == ServerOrigin.TERVYN_FAST || it == ServerOrigin.TERVYN_ALL }
-                val toTest = if (builtin) pool.sortedWith(compareBy<Server>({ if (it.origin == ServerOrigin.TERVYN_FAST) 0 else 1 }, { it.addedAt })).take(300)
-                    else (pool.filter { it.alive } + pool.filter { !it.alive && it.failCount < 3 }.shuffled()).take(400)
-                val res = c.serverManager.testMany(toTest, s, "Testing servers", overallTimeoutMs = 180_000)
-                toast("${res.count { it.second.ok }} working of ${res.size} tested")
+                val (ok, tested, repaired) = c.serverManager.refreshAll()
+                toast("$ok of $tested servers working" + if (repaired > 0) " · $repaired replaced" else "")
             } catch (e: Exception) {
                 toast(e.message ?: "Refresh failed")
+            } finally {
+                _refreshing.value = false
             }
         }
     }
 
-    fun cancelRefresh() { refreshJob?.cancel() }
-
     fun testServer(server: Server, onDone: (TestResult) -> Unit = {}) = viewModelScope.launch {
         val r = c.serverManager.testServer(server)
         onDone(r)
-        toast(if (r.ok) "${server.name}: ${r.latencyMs} ms · ${r.exitIp}" else "${server.name}: ${r.error}")
+        toast(if (r.ok) "${server.name}: ${r.latencyMs} ms · exit ${r.exitIp}" else "${server.name}: ${r.error}")
     }
 
     fun toggleFavorite(s: Server) = viewModelScope.launch { c.servers.setFavorite(s.id, !s.favorite) }
-    fun deleteServer(s: Server) = viewModelScope.launch { c.servers.delete(s.id); toast("Server removed") }
-    fun ranked(list: List<Server>, country: String? = null) = Ranking.rank(list, country)
+    fun deleteServer(s: Server) = viewModelScope.launch {
+        if (s.isBuiltin) { toast("Built-in servers cannot be removed"); return@launch }
+        c.servers.delete(s.id)
+        val cur = c.settings.current()
+        if (cur.selectedServerId == s.id) c.controller.selectServer(null)
+        toast("Server removed")
+    }
 
     // ---- imports -----------------------------------------------------------------------------
 
     data class ImportResult(val added: Int, val working: Int, val invalid: Int, val message: String)
-
-    private suspend fun saveAndTest(eps: List<ProxyEndpoint>, origin: ServerOrigin, replace: Boolean, label: String): ImportResult {
-        if (replace) c.servers.deleteOrigin(origin)
-        val srv = eps.map { c.servers.endpointServer(it, origin) }
-        c.servers.save(srv)
-        val res = c.serverManager.testMany(srv, c.settings.current(), "Testing imported servers", overallTimeoutMs = 180_000)
-        val ok = res.count { it.second.ok }
-        return ImportResult(srv.size, ok, 0, "$label: ${srv.size} saved, $ok working")
-    }
-
-    suspend fun importProxyList(text: String, defaultProtocol: ProxyProtocol, replace: Boolean): ImportResult = withContext(Dispatchers.IO) {
-        val r = ProxyList.parse(text, defaultProtocol)
-        if (r.proxies.isEmpty()) return@withContext ImportResult(0, 0, r.invalidLines, "No valid proxies found (${r.invalidLines} invalid lines)")
-        val res = saveAndTest(r.proxies, ServerOrigin.LIST_FILE, replace, "Proxy list")
-        c.settings.update { it.copy(defaultImportProtocol = defaultProtocol) }
-        res.copy(invalid = r.invalidLines, message = res.message + if (r.invalidLines > 0) " · ${r.invalidLines} invalid lines skipped" else "")
-    }
 
     suspend fun readText(uri: Uri): String = withContext(Dispatchers.IO) {
         ctx.contentResolver.openInputStream(uri)?.use { s ->
@@ -160,12 +163,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (bytes.size > 5_000_000) throw IllegalArgumentException("File is larger than 5 MB")
             String(bytes, Charsets.UTF_8)
         } ?: throw IllegalArgumentException("Cannot read file")
-    }
-
-    suspend fun importSnippet(text: String): ImportResult = withContext(Dispatchers.IO) {
-        val r = ProxySnippet.parse(text)
-        if (r.proxies.isEmpty()) return@withContext ImportResult(0, 0, 0, "No proxy found in the snippet")
-        saveAndTest(r.proxies, ServerOrigin.INTEGRATION, replace = false, label = "Detected ${r.detected}")
     }
 
     suspend fun addCustomProxy(ep: ProxyEndpoint, name: String): Pair<Server, TestResult> = withContext(Dispatchers.IO) {
@@ -182,18 +179,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (http.second.ok) { c.servers.delete(s5.first.id); http } else { c.servers.delete(http.first.id); s5 }
     }
 
-    /** Imports one or many share links (vless/vmess/trojan/ss/socks/http) and tests them via temporary Xray instances. */
+    /** Imports one or many share links (vless/vmess/trojan/ss/hysteria2/socks/http) and tests them. */
     suspend fun importLinks(text: String): ImportResult = withContext(Dispatchers.IO) {
-        val (ok, errors) = Links.parseMany(text)
-        if (ok.isEmpty()) {
-            val first = text.lineSequence().firstOrNull { it.contains("://") }
-            val why = first?.let { runCatching { Links.parse(it) }.exceptionOrNull()?.message }
-            return@withContext ImportResult(0, 0, errors, why ?: "No valid share link found")
+        val lines = Links.decodeSubscription(text).lineSequence().map { it.trim() }.filter { it.contains("://") && !it.startsWith("#") }.toList()
+        val servers = mutableListOf<Server>()
+        var errors = 0
+        var insecure = 0
+        var firstError: String? = null
+        for (l in lines) {
+            val scheme = l.substringBefore("://").lowercase()
+            if (scheme in setOf("socks", "socks5", "socks5h", "http", "https")) {
+                // Plain proxy URLs are stored as direct endpoints (no Xray needed).
+                val ep = ProxyList.parseUrl(l)
+                if (ep != null) servers += c.servers.endpointServer(ep, ServerOrigin.CUSTOM) else { errors++; firstError = firstError ?: "Invalid proxy URL" }
+                continue
+            }
+            try {
+                val o = Links.parse(l)
+                if (o.insecureRequested) insecure++
+                servers += c.servers.linkServer(l, o, ServerOrigin.CUSTOM)
+            } catch (e: Exception) {
+                errors++; firstError = firstError ?: e.message
+            }
         }
-        val servers = ok.map { (link, o) -> c.servers.linkServer(link, o, ServerOrigin.CUSTOM) }
+        if (servers.isEmpty()) return@withContext ImportResult(0, 0, errors, firstError ?: "No valid server link found")
         c.servers.save(servers)
-        val insecure = ok.count { it.second.insecureRequested }
-        val res = c.serverManager.testMany(servers, c.settings.current().copy(testConcurrency = 4), "Testing imported servers", overallTimeoutMs = 120_000)
+        val res = c.serverManager.testMany(servers, "Testing imported servers", overallTimeoutMs = 120_000, concurrency = 8)
         val working = res.count { it.second.ok }
         ImportResult(servers.size, working, errors, "${servers.size} imported, $working working" +
             (if (errors > 0) " · $errors invalid" else "") +
@@ -201,19 +212,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             (if (!c.xray.available) " · Xray is unavailable on this device" else ""))
     }
 
+    suspend fun importLinksFromFile(uri: Uri): ImportResult = importLinks(readText(uri))
+
     suspend fun addSubscription(name: String, url: String): ImportResult = withContext(Dispatchers.IO) {
         val id = c.subscriptions.add(name.ifBlank { Uri.parse(url).host ?: "Subscription" }, url.trim())
         refreshSubscription(c.subscriptions.all().first { it.id == id })
     }
 
-    suspend fun refreshSubscription(sub: com.tervyn.vpn.data.SubscriptionRepository.Subscription): ImportResult = withContext(Dispatchers.IO) {
+    suspend fun refreshSubscription(sub: SubscriptionRepository.Subscription): ImportResult = withContext(Dispatchers.IO) {
         try {
             val (ok, errors) = c.subscriptionFetcher.fetch(sub.url)
             c.servers.deleteSubscription(sub.id)
             val servers = ok.map { (link, o) -> c.servers.linkServer(link, o, ServerOrigin.SUBSCRIPTION, sub.id) }
             c.servers.save(servers)
             c.subscriptions.markUpdated(sub, servers.size, null)
-            val res = c.serverManager.testMany(servers.take(60), c.settings.current().copy(testConcurrency = 4), "Testing subscription", overallTimeoutMs = 150_000)
+            val res = c.serverManager.testMany(servers.take(60), "Testing subscription", overallTimeoutMs = 150_000, concurrency = 8)
             ImportResult(servers.size, res.count { it.second.ok }, errors, "${servers.size} servers updated, ${res.count { it.second.ok }} working")
         } catch (e: Exception) {
             c.subscriptions.markUpdated(sub, sub.count, e.message ?: "failed")
@@ -223,25 +236,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteSubscription(id: Long) = viewModelScope.launch { c.servers.deleteSubscription(id); c.subscriptions.delete(id) }
 
-    fun proxioKeySet() = c.secureStore.proxioKey() != null
-
-    suspend fun saveProxio(key: String?, protocol: String, limit: Int): ImportResult = withContext(Dispatchers.IO) {
-        if (key != null) c.secureStore.setProxioKey(key)
-        c.settings.update { it.copy(proxioProtocol = protocol, proxioLimit = limit) }
-        if (c.secureStore.proxioKey() == null) return@withContext ImportResult(0, 0, 0, "Enter your Proxio.io API key")
-        try {
-            val n = c.serverManager.refreshProxio(c.settings.current())
-            val list = c.servers.byOrigins(setOf(ServerOrigin.PROXIO))
-            val res = c.serverManager.testMany(list, c.settings.current(), "Testing Proxio servers", overallTimeoutMs = 150_000)
-            ImportResult(n, res.count { it.second.ok }, 0, "$n Proxio servers loaded, ${res.count { it.second.ok }} working")
-        } catch (e: Exception) {
-            ImportResult(0, 0, 0, e.message ?: "Proxio request failed")
-        }
-    }
-
-    fun clearProxioKey() { c.secureStore.setProxioKey(null); toast("API key removed") }
-
-    fun setSourceMode(m: SourceMode) = viewModelScope.launch { c.settings.update { it.copy(sourceMode = m, selectedServerId = null, autoSwitch = true) }; toast("Server source: ${m.label}") }
+    fun linkError(text: String): String? = try { Links.parse(text.trim()); null } catch (e: LinkParseException) { e.message } catch (e: Exception) { "Invalid link" }
 
     // ---- websites ----------------------------------------------------------------------------
 
@@ -259,20 +254,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setDomainEnabled(d: String, on: Boolean) = viewModelScope.launch { c.domains.setEnabled(d, on); c.controller.reloadDomains() }
     fun removeDomain(d: String) = viewModelScope.launch { c.domains.remove(d); c.controller.reloadDomains() }
 
-    fun setExcludedApps(pkgs: Set<String>) = viewModelScope.launch {
-        c.settings.update { it.copy(excludedApps = pkgs) }
-        c.controller.reloadRouting()
-    }
-
-    fun setIncludedApps(pkgs: Set<String>) = viewModelScope.launch {
-        c.settings.update { it.copy(includedApps = pkgs) }
-        c.controller.reloadRouting()
-    }
-
-    fun setSplitMode(m: com.tervyn.vpn.data.SplitMode) = viewModelScope.launch {
-        c.settings.update { it.copy(splitMode = m) }
-        c.controller.reloadRouting()
-    }
+    fun setExcludedApps(pkgs: Set<String>) = viewModelScope.launch { c.settings.update { it.copy(excludedApps = pkgs) }; c.controller.reloadRouting() }
+    fun setIncludedApps(pkgs: Set<String>) = viewModelScope.launch { c.settings.update { it.copy(includedApps = pkgs) }; c.controller.reloadRouting() }
+    fun setSplitMode(m: SplitMode) = viewModelScope.launch { c.settings.update { it.copy(splitMode = m) }; c.controller.reloadRouting() }
 
     // ---- tools -------------------------------------------------------------------------------
 
@@ -283,9 +267,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun checkIp() = viewModelScope.launch {
         _ipLoading.value = true
-        val s = c.settings.current()
         val ep = if (status.value.isConnected) c.controller.activeEndpoint else null
-        _ip.value = runCatching { IpChecker(c.httpsOverProxy).check(ep, s.traceUrl, s.ipLookupUrl) }
+        _ip.value = runCatching { IpChecker(c.httpsOverProxy).check(ep, ProxyTester.DEFAULT_TRACE_URL, IpChecker.DEFAULT_LOOKUP) }
             .fold({ it to null }, { null to (it.message ?: "IP check failed") })
         _ipLoading.value = false
     }
@@ -313,7 +296,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val up = runCatching { st.upload(ep) / 1e6 }.getOrNull()
                 _speed.value = _speed.value.copy(upMbps = up, running = false, stage = "Done")
                 c.history.log("SPEED_TEST", if (ep != null) "Through VPN (${status.value.server?.name})" else "Direct connection",
-                    "↓ ${"%.1f".format(down)} Mbps · ↑ ${up?.let { "%.1f".format(it) } ?: "n/a"} Mbps · ${lat} ms", lat, down, up)
+                    "↓ ${"%.1f".format(down)} Mbps · ↑ ${up?.let { "%.1f".format(it) } ?: "n/a"} Mbps · $lat ms", lat, down, up)
             } catch (e: Exception) {
                 _speed.value = _speed.value.copy(running = false, error = e.message ?: "Speed test failed", stage = "Failed", liveMbps = null)
             }
@@ -333,7 +316,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         fun add(ch: Check) { out += ch; _diag.value = out.toList() }
         val s = c.settings.current()
         val http = HttpsOverProxy()
-        add(runCatching { http.request(s.traceUrl, null, timeoutMs = 8000, maxBody = 8192) }.fold(
+        add(runCatching { http.request(ProxyTester.DEFAULT_TRACE_URL, null, timeoutMs = 8000, maxBody = 8192) }.fold(
             { Check("Internet (HTTPS, direct)", it.code == 200, "Response in ${it.totalMs} ms, certificate verified") },
             { Check("Internet (HTTPS, direct)", false, it.message ?: "failed") }))
         add(runCatching { runInterruptible { InetAddress.getAllByName("www.cloudflare.com") } }.fold(
@@ -344,20 +327,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         add(Check("VPN permission", c.controller.needsPermission() == null, if (c.controller.needsPermission() == null) "Granted" else "Not granted yet"))
         val st = status.value
         add(Check("VPN tunnel", if (st.isConnected) true else null, "${st.phase.label}${st.server?.let { " · ${it.name}" } ?: ""}"))
+        add(Check("Secure DNS", if (st.isDnsOnly) true else null, when {
+            st.isDnsOnly -> "DNS-only tunnel active · ${st.dnsQueries} queries answered over DoH"
+            st.isConnected -> "Not needed while connected: the server resolves names"
+            s.secureDns -> "Enabled, waiting to start"
+            else -> "Off"
+        }))
         val ep = c.controller.activeEndpoint
         if (st.isConnected && ep != null) {
-            val r = c.serverManager.tester(s).test(ep)
-            add(Check("Proxy availability", r.ok, if (r.ok) "Exit ${r.exitIp} (${r.countryCode ?: "?"}), ${r.latencyMs} ms" else r.error ?: "failed"))
-            add(Check("DNS leak protection", true, if (s.mode == VpnMode.ALL_APPS) "All DNS answered locally; lookups resolved by the proxy" else "Selected sites resolved via the proxy; others via ${s.dohUrl}"))
-            add(Check("UDP / QUIC", null, "${st.udpBlocked} UDP packets rejected (proxies carry TCP only; apps fall back to TCP)"))
+            val r = c.serverManager.tester().test(ep)
+            add(Check("Server reachability", r.ok, if (r.ok) "Exit ${r.exitIp} (${r.countryCode ?: "?"}), ${r.latencyMs} ms" else r.error ?: "failed"))
+            add(Check("DNS leak protection", true, if (s.mode == VpnMode.ALL_APPS) "All DNS answered locally; names resolved by the server" else "Selected sites resolved via the server; others via ${s.dohUrl}"))
+            add(Check("UDP / QUIC", null, "${st.udpBlocked} UDP packets rejected (the tunnel carries TCP only; apps fall back to TCP)"))
         }
         val cm = ctx.getSystemService(ConnectivityManager::class.java)
         if (Build.VERSION.SDK_INT >= 28) {
             val lp = cm.getLinkProperties(cm.activeNetwork)
             val pdns = lp?.privateDnsServerName
-            add(Check("Android Private DNS", if (pdns != null && s.mode == VpnMode.ONLY_MY_SITES) false else null,
+            add(Check("Android Private DNS", if (pdns != null && (s.mode == VpnMode.ONLY_MY_SITES || s.secureDns)) false else null,
                 when {
-                    pdns != null -> "Set to \"$pdns\": it bypasses Tervyn's DNS, so Only My Sites cannot detect sites. Set Private DNS to Automatic or Off."
+                    pdns != null -> "Set to \"$pdns\": it bypasses Tervyn's DNS (Only my sites and Secure DNS). Set Private DNS to Automatic or Off."
                     lp?.isPrivateDnsActive == true -> "Automatic (opportunistic) — compatible"
                     else -> "Off — compatible"
                 }))
@@ -365,59 +354,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pm = ctx.getSystemService(PowerManager::class.java)
         add(Check("Battery optimisation", if (pm.isIgnoringBatteryOptimizations(ctx.packageName)) true else null,
             if (pm.isIgnoringBatteryOptimizations(ctx.packageName)) "Unrestricted" else "Optimised (the system may stop the VPN in deep sleep)"))
-        add(Check("Xray core", if (c.xray.available) true else false, c.xray.version() ?: "Binary not found for this ABI"))
+        add(Check("Xray core", c.xray.available, c.xray.version() ?: "Binary not found for this device"))
         c.history.log("DIAGNOSTICS", "Network diagnostics", "${out.count { it.ok == true }} passed, ${out.count { it.ok == false }} failed")
         _diagRunning.value = false
     }
 
-    private val _checks = MutableStateFlow<Map<String, Check>>(emptyMap())
-    val checkResults = _checks.asStateFlow()
-    private val _checkRunning = MutableStateFlow<Set<String>>(emptySet())
-    val checkRunning = _checkRunning.asStateFlow()
-
-    /** Runs one diagnostic tool: internet, dns, proxy, loss or latency. */
-    fun runCheck(id: String) = viewModelScope.launch(Dispatchers.IO) {
-        _checkRunning.value = _checkRunning.value + id
-        val s = c.settings.current()
-        val ep = if (status.value.isConnected) c.controller.activeEndpoint else null
-        val r: Check = try {
-            when (id) {
-                "internet" -> HttpsOverProxy().request(s.traceUrl, null, timeoutMs = 8000, maxBody = 8192)
-                    .let { Check("Internet connectivity", it.code == 200, "HTTPS OK in ${it.totalMs} ms (certificate verified)") }
-                "dns" -> {
-                    val t0 = System.currentTimeMillis()
-                    val a = runInterruptible { InetAddress.getAllByName("www.cloudflare.com") }
-                    val doh = c.doh.direct(DnsMessage.buildQuery(9, "example.com", DnsMessage.TYPE_A))
-                    Check("DNS lookup", a.isNotEmpty() && doh != null, "System resolver ${System.currentTimeMillis() - t0} ms · encrypted DNS ${if (doh != null) "OK" else "failed"}")
-                }
-                "proxy" -> if (ep == null) Check("Proxy health check", null, "Not connected") else
-                    c.serverManager.tester(s).test(ep).let { Check("Proxy health check", it.ok, if (it.ok) "Exit ${it.exitIp} · ${it.latencyMs} ms" else it.error ?: "failed") }
-                "loss", "latency" -> {
-                    val (lat, jit, loss) = SpeedTest(c.httpsOverProxy).latency(ep, samples = if (id == "loss") 10 else 5)
-                    if (id == "loss") Check("Request loss", loss < 20, "$loss% of ${if (ep != null) "tunnelled" else "direct"} probe requests failed (ICMP is not available to apps)")
-                    else Check("Latency", lat != null, lat?.let { "$it ms median HTTPS round-trip · jitter $jit ms" } ?: "Unreachable")
-                }
-                else -> Check(id, null, "Unknown check")
-            }
-        } catch (e: Exception) {
-            Check(id, false, e.message ?: e.javaClass.simpleName)
-        }
-        _checks.value = _checks.value + (id to r)
-        _checkRunning.value = _checkRunning.value - id
-    }
-
-    suspend fun importLinksFromFile(uri: Uri): ImportResult = importLinks(readText(uri))
-
     // ---- privacy / data ----------------------------------------------------------------------
 
     fun clearHistory() = viewModelScope.launch { c.history.clear(); toast("History cleared") }
-
-    fun clearCache() = viewModelScope.launch(Dispatchers.IO) {
-        c.servers.deleteOrigin(ServerOrigin.FREE_PUBLIC)
-        ctx.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-        c.xray.cleanupStaleConfigs()
-        toast("Cached free servers and temporary files cleared")
-    }
 
     fun resetSettings() = viewModelScope.launch { c.settings.reset(); c.settings.setPinHash(null); toast("Settings reset") }
 
@@ -431,7 +375,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     @Serializable
     data class ExportBundle(
         val format: String = "tervyn-config",
-        val version: Int = 1,
+        val version: Int = 2,
         val settings: AppSettings,
         val websites: List<String>,
         val presets: List<String>,
@@ -443,7 +387,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun exportConfig(uri: Uri, includeServers: Boolean) = withContext(Dispatchers.IO) {
         val doms = c.domains.all()
-        val own = if (includeServers) c.servers.byOrigins(setOf(ServerOrigin.CUSTOM, ServerOrigin.INTEGRATION, ServerOrigin.LIST_FILE)) else emptyList()
+        val own = if (includeServers) c.servers.byOrigins(setOf(ServerOrigin.CUSTOM)) else emptyList()
         val bundle = ExportBundle(
             settings = c.settings.current().copy(selectedServerId = null),
             websites = doms.filter { it.presetId == null }.map { it.domain },
@@ -459,7 +403,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val b = json.decodeFromString(ExportBundle.serializer(), readText(uri))
             require(b.format == "tervyn-config") { "Not a Tervyn configuration file" }
-            c.settings.update { cur -> b.settings.copy(onboardingDone = cur.onboardingDone, appLock = cur.appLock, biometric = cur.biometric) }
+            c.settings.update { cur -> b.settings.copy(onboardingDone = cur.onboardingDone, appLock = cur.appLock, biometric = cur.biometric, selectedServerId = cur.selectedServerId) }
             b.websites.forEach { c.domains.add(it) }
             Domains.presets.filter { it.id in b.presets }.forEach { c.domains.addPreset(it) }
             val links = b.servers.filter { Links.isShareLink(it) }
@@ -472,6 +416,4 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             toast("Import failed: ${e.message}")
         }
     }
-
-    fun linkError(text: String): String? = try { Links.parse(text.trim()); null } catch (e: LinkParseException) { e.message } catch (e: Exception) { "Invalid link" }
 }

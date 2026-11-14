@@ -32,8 +32,9 @@ class TervynTileService : TileService() {
                 }
                 tile.label = "Tervyn VPN"
                 if (Build.VERSION.SDK_INT >= 29) tile.subtitle = when (s.phase) {
-                    Phase.CONNECTED -> s.countryCode ?: "Connected"
-                    Phase.DISCONNECTED -> "Off"
+                    Phase.CONNECTED -> s.server?.name ?: s.countryCode ?: "Connected"
+                    Phase.DISCONNECTED, Phase.FAILED -> "Off"
+                    Phase.DNS_ONLY -> "Secure DNS only"
                     else -> s.phase.label
                 }
                 tile.updateTile()

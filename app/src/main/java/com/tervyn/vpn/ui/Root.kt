@@ -6,17 +6,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.TrackChanges
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -33,9 +30,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -52,16 +51,40 @@ import com.tervyn.vpn.MainActivity
 import com.tervyn.vpn.PendingActions
 import com.tervyn.vpn.data.AppTheme
 import com.tervyn.vpn.ui.navigation.Routes
-import com.tervyn.vpn.ui.screens.*
+import com.tervyn.vpn.ui.screens.AboutScreen
+import com.tervyn.vpn.ui.screens.AddServerScreen
+import com.tervyn.vpn.ui.screens.AppLockScreen
+import com.tervyn.vpn.ui.screens.BackupScreen
+import com.tervyn.vpn.ui.screens.CheckIpScreen
+import com.tervyn.vpn.ui.screens.DiagnosticsScreen
+import com.tervyn.vpn.ui.screens.DnsScreen
+import com.tervyn.vpn.ui.screens.HistoryScreen
+import com.tervyn.vpn.ui.screens.HomeScreen
+import com.tervyn.vpn.ui.screens.LicensesScreen
+import com.tervyn.vpn.ui.screens.LockScreen
+import com.tervyn.vpn.ui.screens.NotificationsScreen
+import com.tervyn.vpn.ui.screens.OnboardingScreen
+import com.tervyn.vpn.ui.screens.PrivacyScreen
+import com.tervyn.vpn.ui.screens.ServerDetailScreen
+import com.tervyn.vpn.ui.screens.ServersScreen
+import com.tervyn.vpn.ui.screens.SettingsScreen
+import com.tervyn.vpn.ui.screens.SitesScreen
+import com.tervyn.vpn.ui.screens.SpeedTestScreen
+import com.tervyn.vpn.ui.screens.SplitTunnelScreen
+import com.tervyn.vpn.ui.screens.SubscriptionsScreen
 import com.tervyn.vpn.ui.theme.Tervyn
 import com.tervyn.vpn.ui.theme.TervynTheme
-import com.tervyn.vpn.vpn.Phase
 
-/** Returns an action that asks for the VPN consent (and notification permission) when needed, then connects. */
+/**
+ * Returns an action that obtains the system VPN consent (and the notification permission on Android 13+)
+ * when needed, then runs [onGranted]. Used for both connecting a server and starting Secure DNS, which
+ * share the same consent.
+ */
 @Composable
-fun rememberConnectAction(vm: MainViewModel, activity: Activity): () -> Unit {
+fun rememberVpnPermissionAction(vm: MainViewModel, activity: Activity, onGranted: () -> Unit): () -> Unit {
+    val grantedRef = rememberUpdatedState(onGranted)
     val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        if (r.resultCode == Activity.RESULT_OK) vm.connect() else vm.toast("VPN permission is required to connect")
+        if (r.resultCode == Activity.RESULT_OK) grantedRef.value() else vm.toast("The VPN permission is required for this")
     }
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     return remember(vm) {
@@ -70,7 +93,7 @@ fun rememberConnectAction(vm: MainViewModel, activity: Activity): () -> Unit {
                 if (ContextCompat.checkSelfPermission(activity, perm) != PackageManager.PERMISSION_GRANTED) notifLauncher.launch(perm)
             }
             val intent = vm.c.controller.needsPermission()
-            if (intent != null) vpnLauncher.launch(intent) else vm.connect()
+            if (intent != null) vpnLauncher.launch(intent) else grantedRef.value()
         }
     }
 }
@@ -80,10 +103,8 @@ fun TervynRoot(vm: MainViewModel, activity: FragmentActivity) {
     val settings by vm.settings.collectAsState()
     TervynTheme(settings?.theme ?: AppTheme.MIDNIGHT) {
         val s = settings
-        if (s == null) {
-            Box(Modifier.fillMaxSize().background(Tervyn.colors.bg))
-            return@TervynTheme
-        }
+        if (s == null) { Box(Modifier.fillMaxSize().background(Tervyn.colors.bg)); return@TervynTheme }
+
         // ---- app lock gate ----
         val pinHash by vm.pinHash.collectAsState()
         var unlocked by rememberSaveable { mutableStateOf(false) }
@@ -93,7 +114,7 @@ fun TervynRoot(vm: MainViewModel, activity: FragmentActivity) {
             val obs = LifecycleEventObserver { _, e ->
                 if (e == Lifecycle.Event.ON_STOP) backgroundedAt = System.currentTimeMillis()
                 if (e == Lifecycle.Event.ON_START && backgroundedAt > 0 && s.appLock &&
-                    System.currentTimeMillis() - backgroundedAt > s.lockTimeoutSec * 1000L) unlocked = false
+                    System.currentTimeMillis() - backgroundedAt >= s.lockTimeoutSec * 1000L) unlocked = false
             }
             owner.lifecycle.addObserver(obs)
             onDispose { owner.lifecycle.removeObserver(obs) }
@@ -102,13 +123,7 @@ fun TervynRoot(vm: MainViewModel, activity: FragmentActivity) {
             LockScreen(vm, biometricEnabled = s.biometric, onBiometric = { showBiometric(activity) { unlocked = true } }, onUnlocked = { unlocked = true })
             return@TervynTheme
         }
-
-        if (!s.onboardingDone) {
-            var showSplash by rememberSaveable { mutableStateOf(true) }
-            if (showSplash) SplashScreen { showSplash = false }
-            else OnboardingScreen(vm, rememberConnectAction(vm, activity))
-            return@TervynTheme
-        }
+        if (!s.onboardingDone) { OnboardingScreen(vm) { }; return@TervynTheme }
         MainNav(vm, activity)
     }
 }
@@ -127,98 +142,86 @@ fun showBiometric(activity: FragmentActivity, onSuccess: () -> Unit) {
 
 private val tabs = listOf(
     Triple(Routes.HOME, "Home", Icons.Rounded.Home),
-    Triple(Routes.SERVERS, "Servers", Icons.Rounded.BarChart),
+    Triple(Routes.SERVERS, "Servers", Icons.Rounded.Dns),
     Triple(Routes.SETTINGS, "Settings", Icons.Rounded.Settings),
 )
+
+private fun NavHostController.navigateTab(route: String) = navigate(route) { popUpTo(Routes.HOME) { saveState = true }; launchSingleTop = true; restoreState = true }
 
 @Composable
 fun MainNav(vm: MainViewModel, activity: FragmentActivity) {
     val nav = rememberNavController()
-    val connect = rememberConnectAction(vm, activity)
-    val snackbar = remember { SnackbarHostState() }
     val c = Tervyn.colors
-    val status by vm.status.collectAsState()
+    val snackbar = remember { SnackbarHostState() }
+    val connect = rememberVpnPermissionAction(vm, activity, onGranted = { vm.connect() })
+    val enableDns = rememberVpnPermissionAction(vm, activity, onGranted = { vm.setSecureDns(true) })
     val connectRequested by PendingActions.connectRequested.collectAsState()
     val pendingLink by PendingActions.importLink.collectAsState()
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(connectRequested) { if (connectRequested) { PendingActions.connectRequested.value = false; connect() } }
-    LaunchedEffect(pendingLink) { if (pendingLink != null) nav.navigate(Routes.IMPORT_LINK) }
+    LaunchedEffect(pendingLink) { if (pendingLink != null) nav.navigate(Routes.ADD_SERVER) }
     LaunchedEffect(Unit) {
         val s = vm.c.settings.current()
-        if (s.autoConnectOnLaunch && !vm.status.value.isActive && vm.c.controller.needsPermission() == null) vm.connect()
+        val st = vm.status.value
+        if (vm.c.controller.needsPermission() == null) {
+            if (s.autoConnectOnLaunch && !st.isActive) vm.connect()
+            else if (s.secureDns && !st.tunnelUp) vm.c.controller.startSecureDns()
+        }
     }
 
-    val backStack by nav.currentBackStackEntryAsState()
-    val route = backStack?.destination?.route
-    val showBar = tabs.any { it.first == route } || route == Routes.SITES
+    val entry by nav.currentBackStackEntryAsState()
+    val route = entry?.destination?.route
+    val showBar = route in Routes.tabs
+    val go: (String) -> Unit = { r -> if (r in Routes.tabs) nav.navigateTab(r) else nav.navigate(r) }
+    val back: () -> Unit = { nav.popBackStack() }
 
     Scaffold(
         containerColor = c.bg,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (showBar) com.tervyn.vpn.ui.components.TervynBottomBar(tabs, route) { nav.navigateTab(it) }
-        },
-    ) { pad ->
-        androidx.compose.runtime.CompositionLocalProvider(com.tervyn.vpn.ui.components.LocalGo provides { r: String -> if (tabs.any { it.first == r }) nav.navigateTab(r) else nav.navigate(r) { launchSingleTop = true } }) {
-        NavHost(
-            nav, startDestination = Routes.HOME, modifier = Modifier.padding(bottom = pad.calculateBottomPadding()),
-            enterTransition = { fadeIn() }, exitTransition = { fadeOut() },
-        ) {
-            val back: () -> Unit = { nav.popBackStack() }
-            val go: (String) -> Unit = { nav.navigate(it) { launchSingleTop = true } }
-            composable(Routes.HOME) { HomeScreen(vm, connect, go) }
-            composable(Routes.CONNECTING) { ConnectingScreen(vm, back, onConnected = { nav.navigate(Routes.CONNECTED) { popUpTo(Routes.HOME) } }) }
-            composable(Routes.CONNECTED) { ConnectedScreen(vm, back, go) }
-            composable(Routes.SERVERS) { ServersScreen(vm, go, onBack = { nav.navigateTab(Routes.HOME) }) }
-            composable(Routes.SERVER, arguments = listOf(navArgument("id") { type = NavType.StringType })) {
-                ServerDetailsScreen(vm, it.arguments?.getString("id") ?: "", back)
+            if (showBar) NavigationBar(containerColor = c.surface, tonalElevation = 0.dp) {
+                tabs.forEach { (r, label, icon) ->
+                    NavigationBarItem(
+                        selected = route == r, onClick = { nav.navigateTab(r) },
+                        icon = { Icon(icon, null) }, label = { Text(label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = c.accent, selectedTextColor = c.text, indicatorColor = c.accent.copy(alpha = .16f),
+                            unselectedIconColor = c.text3, unselectedTextColor = c.text3,
+                        ),
+                    )
+                }
             }
-            composable(Routes.IP) { CheckIpScreen(vm, back) }
-            composable(Routes.ADVANCED) { AdvancedConfigScreen(vm, back) }
-            composable(Routes.ADD_PROXY) { AddProxyScreen(vm, back, go) }
-            composable(Routes.IMPORT_LINK) { ImportLinkScreen(vm, back, go) }
+        },
+    ) { padding ->
+        NavHost(nav, startDestination = Routes.HOME, modifier = Modifier.padding(bottom = if (showBar) padding.calculateBottomPadding() else 0.dp)) {
+            composable(Routes.HOME) { HomeScreen(vm, connect, enableDns, go) }
+            composable(Routes.SERVERS) { ServersScreen(vm, go) }
+            composable(Routes.SETTINGS) { SettingsScreen(vm, go) }
+            composable(Routes.SERVER, arguments = listOf(navArgument("id") { type = NavType.StringType })) {
+                ServerDetailScreen(vm, it.arguments?.getString("id") ?: "", back, connect)
+            }
+            composable(Routes.ADD_SERVER) {
+                val initial = pendingLink
+                AddServerScreen(vm, onBack = { PendingActions.importLink.value = null; back() }, initial = initial)
+            }
             composable(Routes.SUBSCRIPTIONS) { SubscriptionsScreen(vm, back, go) }
-            composable(Routes.LIST_IMPORT) { ListImportScreen(vm, back) }
-            composable(Routes.INTEGRATION) { IntegrationScreen(vm, back) }
-            composable(Routes.PROTOCOLS) { ProtocolSelectionScreen(back, go) }
-            composable(Routes.SETTINGS) { SettingsScreen(vm, go, connect, onBack = { nav.navigateTab(Routes.HOME) }) }
-            composable(Routes.SITES) { SitesScreen(vm, go) }
+            composable(Routes.DNS) { DnsScreen(vm, back, enableDns) }
+            composable(Routes.SITES) { SitesScreen(vm, back) }
             composable(Routes.SPLIT) { SplitTunnelScreen(vm, back) }
-            composable(Routes.COUNTRIES) { CountryScreen(vm, back) }
-            composable(Routes.AUTO_SWITCH) { AutoSwitchScreen(vm, back) }
-            composable(Routes.DNS) { DnsScreen(vm, back) }
-            composable(Routes.PRIVACY) { PrivacyCenterScreen(vm, back, go) }
-            composable(Routes.PERMISSIONS) { PermissionsScreen(vm, back, connect) }
-            composable(Routes.QUICK) { QuickSettingsScreen(vm, back) }
-            composable(Routes.SPEED) { SpeedTestScreen(vm, back, go) }
-            composable(Routes.HISTORY) { HistoryScreen(vm, back) }
-            composable(Routes.DIAGNOSTICS) { DiagnosticsScreen(vm, back, go) }
-            composable(Routes.STATS) { StatsScreen(vm, back) }
-            composable(Routes.NOTIFICATIONS) { NotificationsScreen(vm, back) }
             composable(Routes.APP_LOCK) { AppLockScreen(vm, back, activity) }
-            composable(Routes.HELP) { HelpScreen(back, go) }
-            composable(Routes.FAQ) { FaqScreen(back) }
-            composable(Routes.REPORT) { ReportScreen(vm, back) }
+            composable(Routes.NOTIFICATIONS) { NotificationsScreen(vm, back) }
+            composable(Routes.IP) { CheckIpScreen(vm, back) }
+            composable(Routes.SPEED) { SpeedTestScreen(vm, back) }
+            composable(Routes.DIAGNOSTICS) { DiagnosticsScreen(vm, back) }
+            composable(Routes.HISTORY) { HistoryScreen(vm, back) }
+            composable(Routes.BACKUP) { BackupScreen(vm, back) }
             composable(Routes.ABOUT) { AboutScreen(vm, back, go) }
-            composable(Routes.POLICY) { PrivacyPolicyScreen(back) }
             composable(Routes.LICENSES) { LicensesScreen(back) }
-            composable(Routes.SOURCES) { SourcesScreen(vm, back, go) }
-            composable(Routes.PROXIO) { ProxioScreen(vm, back) }
-            composable(Routes.FREE_SOURCES) { FreeSourcesScreen(vm, back) }
-            composable(Routes.THEME) { ThemeScreen(vm, back) }
-            composable(Routes.TERMS) { TermsScreen(back) }
-        }
+            composable(Routes.PRIVACY) { PrivacyScreen(back) }
         }
     }
-    // Follow the connection flow: show the connecting screen while busy from Home.
-    LaunchedEffect(status.phase) {
-        if (route == Routes.HOME && status.phase in setOf(Phase.FETCHING, Phase.TESTING, Phase.CONNECTING)) nav.navigate(Routes.CONNECTING) { launchSingleTop = true }
-    }
+    @Suppress("unused") val transparent = Color.Transparent
 }
 
-fun NavHostController.navigateTab(route: String) = navigate(route) {
-    popUpTo(Routes.HOME) { saveState = true }
-    launchSingleTop = true
-    restoreState = true
-}
+private val Int.dp get() = androidx.compose.ui.unit.Dp(this.toFloat())

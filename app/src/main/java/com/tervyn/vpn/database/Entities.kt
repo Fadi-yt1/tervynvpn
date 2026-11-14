@@ -20,6 +20,8 @@ data class ServerEntity(
     val origin: String,
     val subscriptionId: Long?,
     val countryCode: String?,
+    /** Country announced by the provider; shown until the exit country has been verified. */
+    val declaredCountry: String? = null,
     val exitIp: String?,
     val latencyMs: Int?,
     val alive: Boolean,
@@ -61,7 +63,7 @@ data class HistoryEntity(
     val mode: String,
     val bytesDown: Long = 0,
     val bytesUp: Long = 0,
-    /** CONNECTED, ENDED, FAILED */
+    /** CONNECTED, ENDED, FAILED, SWITCHED */
     val status: String,
     val detail: String? = null,
 )

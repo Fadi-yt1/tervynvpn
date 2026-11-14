@@ -35,7 +35,7 @@ class TunEngineTest {
 
     @After fun tearDown() { engine.stop(); toEngine.put(ByteArray(0)); cleanup.forEach { runCatching { it.close() } } }
 
-    private fun startEngine(proxy: ProxyEndpoint?, routeAll: Boolean = true, routed: (String) -> Boolean = { true }) {
+    private fun startEngine(proxy: ProxyEndpoint?, routeAll: Boolean = true, routed: (String) -> Boolean = { true }, forward: suspend (ByteArray) -> ByteArray? = { null }) {
         val input = object : InputStream() {
             override fun read(): Int = throw UnsupportedOperationException()
             override fun read(b: ByteArray, off: Int, len: Int): Int {
@@ -47,7 +47,7 @@ class TunEngineTest {
             override fun write(b: Int) = throw UnsupportedOperationException()
             override fun write(b: ByteArray, off: Int, len: Int) { fromEngine.put(b.copyOfRange(off, off + len)) }
         }
-        val dns = DnsResponder(fakeDns, routed) { null }
+        val dns = DnsResponder(fakeDns, routed, forward)
         engine = TunEngine(input, output, TunEngine.Config(routeAll = routeAll), fakeDns, dns,
             TunEngine.Upstream { h, p -> if (proxy == null) error("no proxy") else ProxyDialer.connect(proxy, h, p, 3000, 3000) })
         engine.start()
@@ -175,7 +175,7 @@ class TunEngineTest {
     @Test fun onlyMySitesRejectsUnroutedIpsAndRoutesNames() {
         val echo = EchoServer().also { cleanup += it }
         val proxy = MockProxy(true) { echo.port }.also { cleanup += it }
-        startEngine(ProxyEndpoint(ProxyProtocol.SOCKS5, "127.0.0.1", proxy.port), routeAll = false) { it.endsWith("youtube.com") }
+        startEngine(ProxyEndpoint(ProxyProtocol.SOCKS5, "127.0.0.1", proxy.port), routeAll = false, routed = { it.endsWith("youtube.com") })
         val c = Client(Packets.ipFromString("8.8.8.8"), 443)
         send(c.pkt(Packets.SYN))
         assertTrue(parse(next()).has(Packets.RST))
@@ -210,5 +210,45 @@ class TunEngineTest {
         clients.forEach { it.write("x".toByteArray()) }
         Thread.sleep(500)
         assertEquals(20, proxy.targets.size)
+    }
+
+    // ---- Secure DNS (DNS-only tunnel) --------------------------------------------------------
+
+    /** DNS-only mode: no names are routed (no synthetic addresses); every query is forwarded and the real answer returned. */
+    @Test fun dnsOnlyForwardsQueriesAndReturnsRealAnswers() {
+        val realIp = Packets.ipFromString("93.184.216.34")
+        var forwarded = 0
+        startEngine(null, routeAll = false, routed = { false }) { q ->
+            forwarded++
+            val parsed = DnsMessage.parseQuery(q)!!
+            DnsMessage.answerA(q, parsed, listOf(realIp), 300)
+        }
+        val ip = resolve("example.com")
+        assertEquals(realIp, ip)
+        assertEquals(1, forwarded)
+        assertTrue("no synthetic address must be handed out in DNS-only mode", !fakeDns.isFake(ip))
+        assertEquals(0, fakeDns.size())
+        assertEquals(1, engine.dnsQueries.get())
+    }
+
+    /** DNS-only mode: a TCP connection attempt is refused immediately (nothing is relayed, nothing is leaked). */
+    @Test fun dnsOnlyRefusesTcp() {
+        startEngine(null, routeAll = false, routed = { false })
+        val client = Client(Packets.ipFromString("93.184.216.34"), 443)
+        send(client.pkt(Packets.SYN, opts = byteArrayOf(2, 4, 5, 0xB4.toByte())))
+        val rst = parse(next())
+        assertTrue(rst.has(Packets.RST))
+        assertEquals(0, engine.activeConnections)
+        assertEquals(0L, engine.connectionsOpened.get())
+    }
+
+    /** DNS-only mode: when the resolver is unreachable the app gets SERVFAIL, never a made-up answer. */
+    @Test fun dnsOnlyReportsResolverFailure() {
+        startEngine(null, routeAll = false, routed = { false }) { null }
+        send(Packets.buildUdp(appIp, FakeDns.DNS_ADDRESS, 5556, 53, DnsMessage.buildQuery(7, "example.org", DnsMessage.TYPE_A)))
+        val p = next()
+        val udp = Packets.Udp.parse(Packets.Ipv4.parse(p, p.size)!!)!!
+        assertEquals(DnsMessage.RCODE_SERVFAIL, DnsMessage.rcode(udp.payload()))
+        assertTrue(DnsMessage.parseAnswersA(udp.payload()).isEmpty())
     }
 }

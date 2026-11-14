@@ -43,6 +43,8 @@ class IpChecker(private val http: HttpsOverProxy = HttpsOverProxy()) {
     }
 
     companion object {
+        /** Returns JSON with ip, city, region, country, org. `{ip}` is replaced with the address. */
+        const val DEFAULT_LOOKUP = "https://ipinfo.io/{ip}/json"
         private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
         /** Understands ipinfo.io, ipwho.is and ip-api style responses. */

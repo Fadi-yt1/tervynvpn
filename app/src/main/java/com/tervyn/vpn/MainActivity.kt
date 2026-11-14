@@ -23,7 +23,8 @@ class MainActivity : FragmentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        vm = ViewModelProvider(this)[MainViewModel::class.java]
+        // Explicit factory: the default AndroidViewModelFactory is a process-wide singleton bound to the first Application it saw.
+        vm = ViewModelProvider(this, ViewModelProvider.AndroidViewModelFactory(application))[MainViewModel::class.java]
         handleIntent(intent)
         setContent { TervynRoot(vm, this) }
     }
